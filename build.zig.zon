@@ -1,0 +1,11 @@
+.{
+    .name = .xnnpack,
+    .version = "0.0.0",
+    .fingerprint = 0xe08d670bec40d97f,
+    .minimum_zig_version = "0.17.1",
+    .paths = .{""},
+    .dependencies = .{
+        .cpuinfo = .{ .path = "../cpuinfo" },
+        .pthreadpool = .{ .path = "../pthreadpool-fork" },
+    },
+}
