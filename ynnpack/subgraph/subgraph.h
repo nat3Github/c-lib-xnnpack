@@ -21,9 +21,13 @@
 #include <variant>
 #include <vector>
 
+#include "ynnpack/base/ref_count.h"
 #include "ynnpack/base/type.h"
 #include "ynnpack/include/ynnpack.h"
+#include "ynnpack/kernels/dequantize_dot/dequantize_dot.h"
 #include "ynnpack/kernels/ternary/ternary.h"
+#include "ynnpack/kernels/unary/unary.h"
+#include "ynnpack/subgraph/iota.h"
 #include "ynnpack/subgraph/slinky.h"
 #include "slinky/runtime/buffer.h"
 #include "slinky/runtime/evaluate.h"
@@ -31,10 +35,22 @@
 
 namespace ynn {
 
-// dot packing splits + transposes 2 dimensions.
-constexpr size_t ynn_internal_extra_dims = 2;
+#define YNN_RETURN_IF_ERROR(status)      \
+  do {                                   \
+    const ynn_status _status = (status); \
+    if (_status != ynn_status_success) { \
+      return _status;                    \
+    }                                    \
+  } while (0)
 
-struct axes_set : std::bitset<YNN_MAX_TENSOR_RANK + ynn_internal_extra_dims> {
+// dot packing splits + transposes 2 dimensions.
+constexpr size_t internal_extra_dims = 2;
+
+// This constant is the internal max tensor rank (as opposed to
+// YNN_MAX_TENSOR_RANK, the limit in the public API).
+constexpr size_t max_tensor_rank = YNN_MAX_TENSOR_RANK + internal_extra_dims;
+
+struct axes_set : std::bitset<max_tensor_rank> {
   using bitset::bitset;
 };
 
@@ -42,12 +58,27 @@ inline bool operator<(const axes_set& a, const axes_set& b) {
   return a.to_ulong() < b.to_ulong();
 }
 
-// Define a transpose node, optionally using a slinky copy that may alias even
-// if dimension 0 is not stride 1 in the result.
-ynn_status define_static_transpose(ynn_subgraph_t subgraph,
-                                   std::vector<int32_t> permutation,
-                                   uint32_t input_id, uint32_t* output_id,
-                                   bool alias = false);
+// Validation helpers for public APIs.
+ynn_status validate_subgraph(const char* node, ynn_subgraph_t subgraph);
+ynn_status validate_rank(const char* node, const char* rank_of, size_t rank);
+ynn_status validate_axis(const char* node, const char* axis_of, int rank,
+                         int32_t axis);
+ynn_status validate_input_tensor(const char* node, ynn_subgraph_t subgraph,
+                                 const char* name, uint32_t id,
+                                 bool optional = false);
+ynn_status validate_input_tensor_array(const char* node,
+                                       ynn_subgraph_t subgraph,
+                                       const char* name, size_t count,
+                                       const uint32_t* ids,
+                                       bool allow_empty = false);
+ynn_status validate_output_tensor(const char* node, ynn_subgraph_t subgraph,
+                                  const char* name, uint32_t* id_out);
+ynn_status validate_output_tensor_array(const char* node,
+                                        ynn_subgraph_t subgraph,
+                                        const char* name, size_t count,
+                                        uint32_t* id_outs,
+                                        bool allow_empty = false);
+ynn_status validate_runtime(ynn_runtime_t runtime);
 
 }  // namespace ynn
 
@@ -63,10 +94,6 @@ struct ynn_value {
 
   // The data we have for this value, if any.
   slinky::raw_buffer_ptr data;
-
-  // Tensor IDs for quantization data, if any.
-  uint32_t zero_point_id = YNN_INVALID_VALUE_ID;
-  uint32_t scale_id = YNN_INVALID_VALUE_ID;
 
   // The inferred shape of this value.
   // TODO: We need an absl::InlinedVector for things like this.
@@ -119,9 +146,31 @@ struct ynn_value {
 
   std::string name() const;
 
-  // Get the extent of a dimension, or 1 if it is implicitly broadcasted.
+  // Get the logical extent of a dimension, or 1 if it is implicitly
+  // broadcasted.
   slinky::expr extent(size_t i) const {
     return i < extents.size() && extents[i].defined() ? extents[i] : 1;
+  }
+
+  slinky::expr physical_extent(size_t i) const {
+    if (i == 0 && i < extents.size()) {
+      int elem_count = ynn::type_element_count(type);
+      if (elem_count != 1) {
+        return slinky::ceil_div<slinky::expr>(extent(0), elem_count);
+      }
+    }
+
+    return extent(i);
+  }
+
+  std::vector<slinky::expr> physical_extents() const {
+    std::vector<slinky::expr> phys = extents;
+    if (!phys.empty()) {
+      if (phys[0].defined() || ynn::type_element_count(type) != 1) {
+        phys[0] = physical_extent(0);
+      }
+    }
+    return phys;
   }
 
   // Asserting that the value is reshapable to a static scalar value of type T,
@@ -137,7 +186,7 @@ struct ynn_value {
 
   // If the value is reshape-able to a scalar, returns the value converted to
   // a float, otherwise returns nullopt.
-  std::optional<float> as_scalar_float() const;
+  std::optional<ynn::real> as_scalar() const;
 };
 
 struct ynn_node {
@@ -154,16 +203,7 @@ struct ynn_node {
       return std::string_view(a.name) < std::string_view(b.name);
     }
   };
-  struct broadcast {
-    // The dimensions to broadcast.
-    ynn::axes_set axes;
-    friend bool operator==(const broadcast& a, const broadcast& b) {
-      return a.axes == b.axes;
-    }
-    friend bool operator<(const broadcast& a, const broadcast& b) {
-      return a.axes < b.axes;
-    }
-  };
+
   struct broadcast_like {
     // The dimensions to attempt to broadcast.
     ynn::axes_set axes;
@@ -203,19 +243,51 @@ struct ynn_node {
   };
   struct unary_elementwise {
     ynn_unary_operator op;
+    ynn::unary_params params;
     friend bool operator==(const unary_elementwise& a,
                            const unary_elementwise& b) {
-      return a.op == b.op;
+      if (a.op != b.op) return false;
+      switch (a.op) {
+        case ynn_unary_exp:
+          return a.params.exp == b.params.exp;
+        case ynn_unary_erf:
+          return a.params.erf == b.params.erf;
+        case ynn_unary_approx_erf:
+          return a.params.approx_erf == b.params.approx_erf;
+        case ynn_unary_approx_tanh:
+          return a.params.approx_tanh == b.params.approx_tanh;
+        case ynn_unary_tanh:
+          return a.params.tanh == b.params.tanh;
+        case ynn_unary_poly3:
+          return a.params.poly3 == b.params.poly3;
+        default:
+          break;
+      }
+      return true;
     }
     friend bool operator<(const unary_elementwise& a,
                           const unary_elementwise& b) {
-      return a.op < b.op;
+      if (a.op != b.op) return a.op < b.op;
+      switch (a.op) {
+        case ynn_unary_exp:
+          return a.params.exp < b.params.exp;
+        case ynn_unary_erf:
+          return a.params.erf < b.params.erf;
+        case ynn_unary_approx_erf:
+          return a.params.approx_erf < b.params.approx_erf;
+        case ynn_unary_approx_tanh:
+          return a.params.approx_tanh < b.params.approx_tanh;
+        case ynn_unary_tanh:
+          return a.params.tanh < b.params.tanh;
+        case ynn_unary_poly3:
+          return a.params.poly3 < b.params.poly3;
+        default:
+          break;
+      }
+      return false;
     }
   };
-  struct lut {
-    friend bool operator==(const lut&, const lut&) { return true; }
-    friend bool operator<(const lut&, const lut&) { return false; }
-  };
+
   struct binary_elementwise {
     ynn_binary_operator op;
     friend bool operator==(const binary_elementwise& a,
@@ -241,6 +313,15 @@ struct ynn_node {
   struct copy {
     friend bool operator==(const copy&, const copy&) { return true; }
     friend bool operator<(const copy&, const copy&) { return false; }
+  };
+  struct gather {
+    std::vector<int32_t> axes;
+    friend bool operator==(const gather& a, const gather& b) {
+      return a.axes == b.axes;
+    }
+    friend bool operator<(const gather& a, const gather& b) {
+      return a.axes < b.axes;
+    }
   };
   struct fuse_dim {
     // Fuse `axes_count` dimensions starting at `axis` into one dimension.
@@ -318,17 +399,6 @@ struct ynn_node {
       return a.new_dims < b.new_dims;
     }
   };
-  struct static_expand_dims {
-    ynn::axes_set new_axes;
-    friend bool operator==(const static_expand_dims& a,
-                           const static_expand_dims& b) {
-      return a.new_axes == b.new_axes;
-    }
-    friend bool operator<(const static_expand_dims& a,
-                          const static_expand_dims& b) {
-      return a.new_axes < b.new_axes;
-    }
-  };
   struct static_pad {
     struct padding {
       int32_t axis;
@@ -374,6 +444,16 @@ struct ynn_node {
     friend bool operator<(const static_slice& a, const static_slice& b) {
       return std::tie(a.slices, a.slice_dims) <
              std::tie(b.slices, b.slice_dims);
+    }
+  };
+  struct slice_like {
+    ynn::axes_set axes;
+    bool keep_shape = false;
+    friend bool operator==(const slice_like& a, const slice_like& b) {
+      return a.axes == b.axes && a.keep_shape == b.keep_shape;
+    }
+    friend bool operator<(const slice_like& a, const slice_like& b) {
+      return std::tie(a.axes, a.keep_shape) < std::tie(b.axes, b.keep_shape);
     }
   };
   struct static_transpose {
@@ -423,6 +503,15 @@ struct ynn_node {
       return a.num_k_dims < b.num_k_dims;
     }
   };
+  struct iota {
+    ynn::iota_params params;
+    friend bool operator==(const iota& a, const iota& b) {
+      return a.params == b.params;
+    }
+    friend bool operator<(const iota& a, const iota& b) {
+      return a.params < b.params;
+    }
+  };
   struct pack_b {
     friend bool operator==(const pack_b&, const pack_b&) { return true; }
     friend bool operator<(const pack_b&, const pack_b&) { return false; }
@@ -440,13 +529,16 @@ struct ynn_node {
   struct get_tensor_shape {
     std::vector<int32_t> axes;
     bool reshape_1d;
+    bool unique_dims;
     friend bool operator==(const get_tensor_shape& a,
                            const get_tensor_shape& b) {
-      return a.axes == b.axes && a.reshape_1d == b.reshape_1d;
+      return a.axes == b.axes && a.reshape_1d == b.reshape_1d &&
+             a.unique_dims == b.unique_dims;
     }
     friend bool operator<(const get_tensor_shape& a,
                           const get_tensor_shape& b) {
-      return std::tie(a.axes, a.reshape_1d) < std::tie(b.axes, b.reshape_1d);
+      return std::tie(a.axes, a.reshape_1d, a.unique_dims) <
+             std::tie(b.axes, b.reshape_1d, b.unique_dims);
     }
   };
   struct reduce {
@@ -461,17 +553,38 @@ struct ynn_node {
              std::tie(b.op, b.keep_dims, b.k_dims);
     }
   };
+  struct dequantize_dot {
+    ynn::dequantize_dot_params params;
+    friend bool operator==(const dequantize_dot& a, const dequantize_dot& b) {
+      return a.params == b.params;
+    }
+    friend bool operator<(const dequantize_dot& a, const dequantize_dot& b) {
+      return a.params < b.params;
+    }
+  };
+  struct dynamic_quantization {
+    int32_t output_zero_point;
+    friend bool operator==(const dynamic_quantization& a,
+                           const dynamic_quantization& b) {
+      return a.output_zero_point == b.output_zero_point;
+    }
+    friend bool operator<(const dynamic_quantization& a,
+                          const dynamic_quantization& b) {
+      return a.output_zero_point < b.output_zero_point;
+    }
+  };
 
   // Value IDs for node inputs and outputs.
   // TODO: We need an absl::InlinedVector for things like this.
   std::vector<uint32_t> inputs;
   std::vector<uint32_t> outputs;
-  std::variant<invalid, opaque, broadcast, broadcast_like, concatenate,
-               even_split, copy, split_dim, fuse_dim, fuse_dims, split_dims,
-               stack, static_reshape, static_broadcast, static_expand_dims,
-               static_pad, static_slice, static_transpose, stencil_copy,
-               unary_elementwise, lut, binary_elementwise, ternary_elementwise,
-               dot, pack_b, transpose_a, get_tensor_shape, reduce>
+  std::variant<invalid, opaque, broadcast_like, concatenate, even_split, copy,
+               gather, split_dim, fuse_dim, fuse_dims, split_dims, stack,
+               static_reshape, static_broadcast, static_pad, static_slice,
+               slice_like, static_transpose, stencil_copy, unary_elementwise,
+               binary_elementwise, ternary_elementwise, dot, iota, pack_b,
+               transpose_a, get_tensor_shape, reduce, dequantize_dot,
+               dynamic_quantization>
       op;
 
   const char* name() const;
@@ -505,7 +618,7 @@ struct ynn_node {
   std::vector<check> checks;
 };
 
-struct ynn_subgraph {
+struct ynn_subgraph : public ynn::ref_counted<ynn_subgraph> {
   explicit ynn_subgraph(uint32_t external_value_ids, uint32_t flags);
 
   // Number of Value IDs reserved for communication with external graph
@@ -522,7 +635,13 @@ struct ynn_subgraph {
 
   ynn::slinky_globals globals;
 
-  bool is_valid_value(uint32_t id) const { return id < values.size(); }
+  bool is_valid_value(uint32_t id) const {
+    return id < values.size() && values[id].is_valid();
+  }
+  bool is_valid_external_value(uint32_t id) const {
+    assert(external_value_ids <= values.size());
+    return id < external_value_ids && values[id].is_valid();
+  }
 
   const ynn_value& value(uint32_t id) const {
     assert(id < values.size());
@@ -539,6 +658,7 @@ struct ynn_subgraph {
 
   // Find the node that produces `id`.
   const ynn_node* get_producer(uint32_t id) const;
+  ynn_node* get_producer(uint32_t id);
 
   // If `output_id` is `YNN_INVALID_VALUE_ID`, makes a new value like
   // `template_value`, and updates `output_id` with the new value ID.
@@ -546,28 +666,20 @@ struct ynn_subgraph {
   ynn_value& get_output_value(uint32_t* output_id,
                               const ynn_value& template_value);
   ynn_value& get_output_value(uint32_t* output_id, ynn_type type);
-  ynn_value& get_output_value(uint32_t* output_id, ynn_type type,
-                              uint32_t zero_point_id, uint32_t scale_id);
 
   // Get a scalar value of the given type and quantization parameters.
-  uint32_t get_scalar_value_id(ynn_type type, uint32_t zero_point_id,
-                               uint32_t scale_id, float value_f32);
+  uint32_t get_scalar_value_id(ynn_type type, float value_f32);
   // Get a constant value of the given type and quantization parameters.
   uint32_t get_static_value_id(ynn_type type, size_t rank, const size_t* dims,
-                               uint32_t zero_point_id, uint32_t scale_id,
                                float* value_f32);
 
   template <typename T>
   uint32_t get_scalar_value_id(T value) {
-    return get_scalar_value_id(ynn::type_of<T>(),
-                               /*zero_point_id=*/YNN_INVALID_VALUE_ID,
-                               /*scale_id=*/YNN_INVALID_VALUE_ID, value);
+    return get_scalar_value_id(ynn::type_of<T>(), value);
   }
 
   void infer_elementwise_shape(ynn_node& node, int input_idx, int output_idx,
-                               int input_dim, int output_dim,
-                               int input_type_element_count = 1,
-                               int output_type_element_count = 1);
+                               int input_dim, int output_dim);
 
   // Find parts of the graph that can be executed independently of any inputs.
   ynn_status fold_constants(slinky::thread_pool* threadpool);
@@ -581,9 +693,14 @@ struct ynn_subgraph {
   // Invalidate unused values.
   void invalidate_dead_values();
 
+  // Topologically sort the nodes in the subgraph.
+  void topological_sort();
+
   ynn_status optimize(slinky::thread_pool* threadpool);
 
   void dump(std::ostream& os) const;
+
+  static void destroy(ynn_subgraph* subgraph) { delete subgraph; }
 };
 
 #endif  // XNNPACK_YNNPACK_SUBGRAPH_SUBGRAPH_H_

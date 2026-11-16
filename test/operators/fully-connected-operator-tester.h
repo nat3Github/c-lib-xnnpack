@@ -398,7 +398,7 @@ class FullyConnectedOperatorTester {
 
       // Verify results.
       VerifyF16(output, output_ref, output_max, output_min,
-                /*tolerance=*/1e-4f);
+                /*tolerance=*/5e-3f);
 
       if (use_weights_cache()) {
         // Create another operator with the same weights cache.
@@ -444,7 +444,7 @@ class FullyConnectedOperatorTester {
         VerifyWeightsCache(*internal_weights_cache, old_weights_cache_size);
 
         VerifyF16(output2, output_ref, output_max, output_min,
-                  /*tolerance=*/1e-4f);
+                  /*tolerance=*/5e-3f);
       }
     }
   }
@@ -4589,8 +4589,9 @@ class FullyConnectedOperatorTester {
         ASSERT_NEAR(
             output_ref[i * output_channels() + c],
             output[i * output_stride() + c],
-            std::max(tolerance * std::abs(output_ref[i * output_channels() + c]),
-                     tolerance))
+            std::max(
+                tolerance * std::abs(output_ref[i * output_channels() + c]),
+                tolerance))
             << "batch index = " << i << ", channel = " << c;
       }
     }

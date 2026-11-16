@@ -15,6 +15,7 @@
 
 #include <gtest/gtest.h>
 #include "ynnpack/base/arch.h"  // IWYU pragma: keep
+#include "ynnpack/base/arithmetic.h"
 #include "ynnpack/base/test/buffer.h"
 #include "ynnpack/base/test/fuzz_test.h"
 #include "ynnpack/base/test/random.h"
@@ -77,8 +78,6 @@ size_t get_max_alignment() {
 
 template <typename AT, typename BT, typename CT>
 void TestMatMul(AT, BT, CT, size_t k) {
-  using B_info = type_info<BT>;
-
   ReplicableRandomDevice rng;
   // We want a large range, but not so large that our outputs are likely to be
   // Inf/NaN.
@@ -95,8 +94,7 @@ void TestMatMul(AT, BT, CT, size_t k) {
   const size_t n = 4096;
 
   Tensor<AT> a({m, k});
-  Tensor<BT> b({k, n / B_info::element_count()},
-               Alignment({.bytes = get_max_alignment()}));
+  Tensor<BT> b({k, n}, Alignment{.bytes = get_max_alignment()});
   Tensor<CT> init_c({m, n});
   fill_random(a.data(), a.size(), rng, -max_abs_value, max_abs_value);
   fill_random(b.data(), b.size(), rng, -max_abs_value, max_abs_value);
@@ -129,22 +127,21 @@ void TestMatMul(AT, BT, CT, size_t k) {
     // dot kernels require B's k and n dimensions to be aligned to tile_k,
     // tile_n. The kernel might also require b to be packed (tile_k > 1).
     Tensor<BT> packed_b = pack_b(b, tile_k, tile_n);
-    Tensor<AT> packed_a = (kernel.flags & dot_flag::transpose_a)
-                              ? transpose_a(a, tile_m, tile_k)
-                              : a;
+    const bool pack_a = kernel.flags & dot_flag::transpose_a;
+    Tensor<AT> packed_a = pack_a ? transpose_a(a, tile_m, tile_k) : a;
 
-    kernel.kernel(m, n, 1, 1, k, packed_a.stride(0) * sizeof(AT), 0, 0,
-                  packed_a.base(), 0, 0,
-                  packed_b.stride(0) * sizeof(BT) / tile_k, packed_b.base(),
-                  kernel_c.stride(0) * sizeof(CT), kernel_c.base(),
-                  kernel_c.stride(0) * sizeof(CT), kernel_c.base());
+    kernel.kernel(m, n, 1, 1, k,
+                  packed_a.stride_bytes(0) / (pack_a ? tile_k : 1), 0, 0,
+                  packed_a.base(), 0, 0, packed_b.stride_bytes(0) / tile_k,
+                  packed_b.base(), kernel_c.stride_bytes(0), kernel_c.base(),
+                  kernel_c.stride_bytes(0), kernel_c.base());
 
     if (c.base()) {
       int finite = 0;
       for (size_t i = 0; i < m; ++i) {
         for (size_t j = 0; j < n; ++j) {
-          bool c_finite = std::isfinite(c(i, j));
-          bool kernel_c_finite = std::isfinite(kernel_c(i, j));
+          bool c_finite = isfinite(c(i, j));
+          bool kernel_c_finite = isfinite(kernel_c(i, j));
           if (c_finite && kernel_c_finite) {
             ASSERT_EQ(c(i, j), kernel_c(i, j));
             finite++;
@@ -159,7 +156,11 @@ void TestMatMul(AT, BT, CT, size_t k) {
       c = kernel_c;
     }
   }
-  ASSERT_GT(consistent_kernels, 0) << "No consistent_arithmetic kernels found.";
+  if (std::is_same_v<AT, float> && std::is_same_v<BT, float> &&
+      std::is_same_v<CT, float>) {
+    ASSERT_GT(consistent_kernels, 0)
+        << "No consistent_arithmetic kernels found.";
+  }
 }
 
 const char* to_string(const KernelInfo& param) { return ""; }

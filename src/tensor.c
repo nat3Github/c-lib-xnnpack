@@ -52,6 +52,7 @@ static enum xnn_status check_zero_point(
   int32_t zero_point)
 {
   switch (datatype) {
+    case xnn_datatype_qint4:
     case xnn_datatype_qcint4:
     case xnn_datatype_qbint4:
       if (zero_point < 0 || zero_point > 15) {
@@ -77,6 +78,7 @@ static enum xnn_status check_zero_point(
         return xnn_status_invalid_parameter;
       }
       break;
+    case xnn_datatype_qint2:
     case xnn_datatype_qcint2:
     case xnn_datatype_qcint8:
     case xnn_datatype_qcint32:
@@ -152,6 +154,10 @@ enum xnn_status xnn_define_tensor_value(
   value->datatype = datatype;
   set_shape(value, num_dims, dims);
   value->size = xnn_tensor_get_size(value);
+  if (value->size == SIZE_MAX) {
+    xnn_log_error("failed to create Dense Tensor value: size overflow for the given shape");
+    return xnn_status_unsupported_parameter;
+  }
   value->flags = flags;
   value->data = (void*) (uintptr_t) data;
   set_allocation_type(value);
@@ -208,6 +214,10 @@ enum xnn_status xnn_define_quantized_tensor_value(
   value->quantization.scale = scale;
   set_shape(value, num_dims, dims);
   value->size = xnn_tensor_get_size(value);
+  if (value->size == SIZE_MAX) {
+    xnn_log_error("failed to create Quantized Dense Tensor value: size overflow for the given shape");
+    return xnn_status_unsupported_parameter;
+  }
   value->flags = flags;
   value->data = (void*) (uintptr_t) data;
   set_allocation_type(value);
@@ -258,8 +268,14 @@ enum xnn_status xnn_define_dynamically_quantized_tensor_value(
 
   switch (datatype) {
     case xnn_datatype_qdint8:
-    case xnn_datatype_qpint8:
       break;
+    case xnn_datatype_qpint8:
+      // qpint8 is an internal datatype produced downstream of public types
+      // like qdint8; it is not valid as an input to the public define API.
+      xnn_log_error("failed to create Dynamically Quantized Dense Tensor value: "
+        "datatype %s (%d) is an internal type and cannot be used through the public API",
+        xnn_datatype_to_string(datatype), datatype);
+      return xnn_status_unsupported_parameter;
     default:
       xnn_log_error("failed to create Dynamically Quantized Dense Tensor value: unsupported datatype %s (%d)",
         xnn_datatype_to_string(datatype), datatype);
@@ -285,6 +301,10 @@ enum xnn_status xnn_define_dynamically_quantized_tensor_value(
   value->quantization.num_nonbatch_dims = num_nonbatch_dims;
   set_shape(value, num_dims, dims);
   value->size = xnn_tensor_get_size(value);
+  if (value->size == SIZE_MAX) {
+    xnn_log_error("failed to create Dynamically Quantized Dense Tensor value: size overflow for the given shape");
+    return xnn_status_unsupported_parameter;
+  }
   value->quantization.dynamic_params_size = xnn_tensor_get_dynamic_quant_param_size(value->datatype, &value->shape, value->quantization.num_nonbatch_dims);
   value->quantization.row_sum_size = xnn_tensor_get_row_sum_size(value->datatype, &value->shape, value->quantization.num_nonbatch_dims);
   value->flags = flags;
@@ -453,6 +473,10 @@ enum xnn_status xnn_define_channelwise_quantized_tensor_value_v3(
   value->quantization.channel_dimension = channel_dim;
   set_shape(value, num_dims, dims);
   value->size = xnn_tensor_get_size(value);
+  if (value->size == SIZE_MAX) {
+    xnn_log_error("failed to create Channelwise Quantized Dense Tensor value: size overflow for the given shape");
+    return xnn_status_unsupported_parameter;
+  }
   value->flags = flags;
   value->data = (void*) (uintptr_t) data;
   set_allocation_type(value);
@@ -509,9 +533,11 @@ enum xnn_status xnn_define_blockwise_quantized_tensor_value_v2(
     return xnn_status_invalid_parameter;
   }
 
-  if (num_dims == 0) {
+  if (num_dims < 2) {
     xnn_log_error(
-      "failed to create Blockwise Quantized Dense Tensor value: no channel dimension exists");
+      "failed to create Blockwise Quantized Dense Tensor value: num of "
+      "dimensions %zu must be at least 2",
+      num_dims);
     return xnn_status_invalid_parameter;
   }
 
@@ -535,6 +561,7 @@ enum xnn_status xnn_define_blockwise_quantized_tensor_value_v2(
         "failed to create Blockwise Quantized Dense Tensor value: block size "
         "is invalid. Got %zu\n",
         block_size);
+    return xnn_status_invalid_parameter;
   }
 
   enum xnn_status status = check_zero_point(datatype, zero_point);
@@ -608,6 +635,10 @@ enum xnn_status xnn_define_blockwise_quantized_tensor_value_v2(
   value->quantization.block_size = block_size;
   set_shape(value, num_dims, dims);
   value->size = xnn_tensor_get_size(value);
+  if (value->size == SIZE_MAX) {
+    xnn_log_error("failed to create Blockwise Quantized Dense Tensor value: size overflow for the given shape");
+    return xnn_status_unsupported_parameter;
+  }
   value->flags = flags;
   value->data = (void*) (uintptr_t) data;
   set_allocation_type(value);
@@ -633,12 +664,17 @@ enum xnn_status xnn_define_blockwise_quantized_tensor_value(
                                                         block_size, dims, data, external_id, flags, xnn_datatype_bf16, id_out);
 }
 
+// All shape-multiply helpers return SIZE_MAX on overflow. Callers that size
+// allocations must treat SIZE_MAX as "too large" and propagate
+// xnn_status_unsupported_parameter.
 size_t xnn_shape_multiply_all_dims(
   const struct xnn_shape* shape)
 {
   size_t batch_size = 1;
   for (size_t i = 0; i < shape->num_dims; i++) {
-    batch_size *= shape->dim[i];
+    if (!xnn_safe_mul(batch_size, shape->dim[i], &batch_size)) {
+      return SIZE_MAX;
+    }
   }
   return batch_size;
 }
@@ -649,7 +685,9 @@ size_t xnn_shape_multiply_batch_dims(
 {
   size_t batch_size = 1;
   for (size_t i = 0; i + num_nonbatch_dims < shape->num_dims; i++) {
-    batch_size *= shape->dim[i];
+    if (!xnn_safe_mul(batch_size, shape->dim[i], &batch_size)) {
+      return SIZE_MAX;
+    }
   }
   return batch_size;
 }
@@ -659,7 +697,9 @@ size_t xnn_shape_multiply_non_channel_dims(
 {
   size_t batch_size = 1;
   for (size_t i = 0; i + 1 < shape->num_dims; i++) {
-    batch_size *= shape->dim[i];
+    if (!xnn_safe_mul(batch_size, shape->dim[i], &batch_size)) {
+      return SIZE_MAX;
+    }
   }
   return batch_size;
 }
@@ -670,7 +710,9 @@ size_t xnn_shape_multiply_leading_dims(
 {
   size_t batch_size = 1;
   for (size_t i = 0; i < num_leading_dims; i++) {
-    batch_size *= shape->dim[i];
+    if (!xnn_safe_mul(batch_size, shape->dim[i], &batch_size)) {
+      return SIZE_MAX;
+    }
   }
   return batch_size;
 }
@@ -681,7 +723,9 @@ size_t xnn_shape_multiply_trailing_dims(
 {
   size_t product = 1;
   for (size_t i = start_dim; i < shape->num_dims; i++) {
-    product *= shape->dim[i];
+    if (!xnn_safe_mul(product, shape->dim[i], &product)) {
+      return SIZE_MAX;
+    }
   }
   return product;
 }
@@ -713,10 +757,10 @@ enum xnn_status xnn_shape_binary_broadcast(const struct xnn_shape* shape_a,
          idx_c >= 0; idx_a--, idx_b--, idx_c--) {
       if (idx_a >= 0 && idx_b >= 0) {
         if (shape_a->dim[idx_a] == 1) {
-          shape_out->dim[idx_c] = shape_a->dim[idx_a];
+          shape_out->dim[idx_c] = shape_b->dim[idx_b];
         } else if (shape_b->dim[idx_b] == 1 ||
                    shape_a->dim[idx_a] == shape_b->dim[idx_b]) {
-          shape_out->dim[idx_c] = shape_b->dim[idx_b];
+          shape_out->dim[idx_c] = shape_a->dim[idx_a];
         } else {
           return xnn_status_invalid_parameter;
         }
@@ -776,14 +820,22 @@ size_t get_tensor_size(const struct xnn_gemm_config* gemm_config, enum xnn_value
            xnn_x8_packq_f32qp8_gemm_packed_size(gemm_config, m, k);
   }
 
-  uint64_t size_bits = xnn_datatype_size_bits(datatype);
-
-  size_bits *= xnn_shape_multiply_all_dims(shape);
-
-  // Round size up to the nearest byte.
+  // Returns SIZE_MAX on overflow so the caller can detect and reject the tensor
+  // before the wrapped value is treated as an allocation size.
+  const size_t num_elements = xnn_shape_multiply_all_dims(shape);
+  if (num_elements == SIZE_MAX) {
+    return SIZE_MAX;
+  }
+  size_t size_bits;
+  if (!xnn_safe_mul(num_elements, xnn_datatype_size_bits(datatype), &size_bits)) {
+    return SIZE_MAX;
+  }
+  if (!xnn_safe_add(size_bits, 7, &size_bits)) {
+    return SIZE_MAX;
+  }
   // TODO: We should not be using this helper for non-byte-addressable types,
   // perhaps we should just assert here.
-  return (size_bits + 7) >> 3;
+  return size_bits >> 3;
 }
 
 size_t xnn_runtime_tensor_get_size(const struct xnn_runtime_value* value)

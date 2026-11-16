@@ -8,6 +8,7 @@
 # pylint: disable=missing-class-docstring
 # pylint: disable=invalid-name
 
+from ynnpack.kernels.dot.generator.dot_base import generate_dot_kernels
 from ynnpack.kernels.dot.generator.x86 import x86
 from ynnpack.kernels.dot.generator.x86 import x86_avx
 from ynnpack.kernels.dot.generator.x86 import x86_avx512
@@ -17,7 +18,9 @@ class x86_bf16_bf16_fp32(x86):
   def __init__(self, arch, bits, tile_shape):
     super().__init__(arch, "bf16_bf16_fp32", "float", bits, tile_shape)
     self.a_type = "bfloat16"
+    self.a_load_type = "std::uint16_t"
     self.b_type = "bfloat16"
+    self.b_load_type = "std::uint16_t"
     # Very interestingly, fma doesn't seem to matter for bf16!
     self.flags += ["dot_flag::consistent_arithmetic"]
 
@@ -26,11 +29,7 @@ class x86_bf16_bf16_fp32(x86):
 
 namespace {{
 
-struct bfloat16 {{
-  std::uint16_t value;
-}};
-
-YNN_INTRINSIC __m{self.bits}i unaligned_load_broadcast_bf16x2(const bfloat16* ptr) {{
+YNN_INTRINSIC __m{self.bits}i unaligned_load_broadcast_bf16x2(const std::uint16_t* ptr) {{
     int32_t value;
     memcpy(&value, ptr, sizeof(int32_t));
     return {self._mm()}_set1_epi32(value);
@@ -115,7 +114,7 @@ class x86_avx512bf16_bf16_bf16_fp32(x86_bf16_bf16_fp32, x86_avx512):
 
 namespace {{
 
-YNN_INTRINSIC __m{self.bits} unaligned_load_broadcast_2xbf16(const bfloat16* ptr) {{
+YNN_INTRINSIC __m{self.bits} unaligned_load_broadcast_2xbf16(const std::uint16_t* ptr) {{
     float value;
     memcpy(&value, ptr, sizeof(float));
     return {self._mm()}_set1_ps(value);
@@ -142,3 +141,61 @@ __m{self.bits}bh a_{i}_{k} = reinterpret_cast<__m{self.bits}bh>({a});
         f"c_{i}_{j} = {self._mm()}_dpbf16_ps(c_{i}_{j}, a_{i}_{k},"
         f" b_{k}_{j});\n"
     )
+
+
+generate_dot_kernels(
+    x86_avx2_fma3_bf16_bf16_fp32(),
+    [
+        (1, 32, 2),
+        (2, 32, 2),
+        (1, 16, 2),
+        (2, 16, 2),
+        (3, 16, 2),
+        (4, 16, 2),
+        (5, 16, 2),
+        (8, 8, 2),
+        (10, 8, 2),
+        (12, 8, 2),
+    ],
+)
+
+generate_dot_kernels(
+    x86_avx512_bf16_bf16_fp32(),
+    [
+        (1, 64, 2),
+        (2, 64, 2),
+        (3, 64, 2),
+        (4, 64, 2),
+        (5, 64, 2),
+        (1, 32, 2),
+        (2, 32, 2),
+        (3, 32, 2),
+        (4, 32, 2),
+        (5, 32, 2),
+        (6, 32, 2),
+        (8, 32, 2),
+        (10, 32, 2),
+        (12, 32, 2),
+        (16, 16, 2),
+    ],
+)
+
+generate_dot_kernels(
+    x86_avx512bf16_bf16_bf16_fp32(),
+    [
+        (1, 64, 2),
+        (2, 64, 2),
+        (3, 64, 2),
+        (4, 64, 2),
+        (5, 64, 2),
+        (2, 32, 2),
+        (3, 32, 2),
+        (4, 32, 2),
+        (5, 32, 2),
+        (6, 32, 2),
+        (8, 32, 2),
+        (10, 32, 2),
+        (12, 32, 2),
+        (16, 16, 2),
+    ],
+)

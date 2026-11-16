@@ -128,12 +128,11 @@ static uint32_t get_identity_value(xnn_operator_t reduce_op, size_t num_reductio
   return identity_value;
 }
 
-static enum xnn_status reshape_reduce_nd(
+static XNN_NO_SANITIZE_FUNCTION enum xnn_status reshape_reduce_nd(
     xnn_operator_t reduce_op, size_t num_reduction_axes,
     const int64_t* reduction_axes, size_t num_input_dims,
     const size_t* input_shape, size_t* workspace_size,
-    enum xnn_operator_type expected_operator_type,
-    pthreadpool_t threadpool) {
+    enum xnn_operator_type expected_operator_type, pthreadpool_t threadpool) {
   if (reduce_op->type != expected_operator_type) {
     xnn_log_error(
         "failed to reshape operator: operator type mismatch (expected %s, got "
@@ -159,38 +158,13 @@ static enum xnn_status reshape_reduce_nd(
     return xnn_status_unsupported_parameter;
   }
 
-  if (num_reduction_axes > num_input_dims) {
+  if (num_reduction_axes > XNN_MAX_TENSOR_DIMS) {
     xnn_log_error(
         "failed to reshape %s operator with %zu reduction axes: the number of "
-        "reduction axes must not exceed the number of input dimensions %zu",
+        "reduction axes must not exceed %d",
         xnn_operator_type_to_string_v2(reduce_op), num_reduction_axes,
-        num_input_dims);
+        XNN_MAX_TENSOR_DIMS);
     return xnn_status_invalid_parameter;
-  }
-
-  if (num_reduction_axes == 0) {
-    xnn_log_error(
-        "failed to reshape %s operator with %zu reduction axes: the number of "
-        "reduction axes must be non-zero",
-        xnn_operator_type_to_string_v2(reduce_op), num_reduction_axes);
-    return xnn_status_invalid_parameter;
-  }
-
-  size_t normalized_input_shape[XNN_MAX_TENSOR_DIMS];
-  assert(num_input_dims <= XNN_MAX_TENSOR_DIMS);
-  memcpy(normalized_input_shape, input_shape, num_input_dims * sizeof(size_t));
-
-  for (size_t i = 0; i < num_reduction_axes; i++) {
-    const int64_t signed_num_input_dims = (int64_t)num_input_dims;
-    if (signed_num_input_dims <= reduction_axes[i] ||
-        reduction_axes[i] < -signed_num_input_dims) {
-      xnn_log_error(
-          "failed to reshape %s operator with #%zu reduction axis of %" PRIi64
-          ": the index is out of bounds for a %zuD input shape",
-          xnn_operator_type_to_string_v2(reduce_op), i, reduction_axes[i],
-          num_input_dims);
-      return xnn_status_invalid_parameter;
-    }
   }
 
   size_t normalized_reduction_axes[XNN_MAX_TENSOR_DIMS];
@@ -203,15 +177,32 @@ static enum xnn_status reshape_reduce_nd(
   qsort(normalized_reduction_axes, num_reduction_axes, sizeof(size_t),
         cmp_value_size_t);
 
-  for (size_t i = 1; i < num_reduction_axes; i++) {
-    if (normalized_reduction_axes[i] <= normalized_reduction_axes[i - 1]) {
-      xnn_log_error(
-          "failed to reshape %s operator with #%zu reduction axis of %" PRIi64
-          ": the reduction axes must be unique",
-          xnn_operator_type_to_string_v2(reduce_op), i, reduction_axes[i]);
-      return xnn_status_invalid_parameter;
+  if (num_reduction_axes == 0 || normalized_reduction_axes[0] >= num_input_dims) {
+    xnn_log_error(
+        "failed to reshape %s operator with %zu reduction axes: the number of "
+        "valid reduction axes must be non-zero",
+        xnn_operator_type_to_string_v2(reduce_op), num_reduction_axes);
+    return xnn_status_invalid_parameter;
+  }
+
+  // Remove duplicate reduction axes.
+  int i = 0;
+  // The array is sorted, we're done when an axis is bigger than num_input_dims.
+  for (int j = 1;
+       j < num_reduction_axes && normalized_reduction_axes[j] < num_input_dims;
+       ++j) {
+    // Shift non-duplicate elements forward.
+    if (normalized_reduction_axes[i] != normalized_reduction_axes[j]) {
+      normalized_reduction_axes[++i] = normalized_reduction_axes[j];
     }
   }
+  num_reduction_axes = i + 1;
+
+  assert(num_reduction_axes <= num_input_dims);
+
+  size_t normalized_input_shape[XNN_MAX_TENSOR_DIMS];
+  assert(num_input_dims <= XNN_MAX_TENSOR_DIMS);
+  memcpy(normalized_input_shape, input_shape, num_input_dims * sizeof(size_t));
 
   xnn_normalize_reduction(
     &num_reduction_axes, normalized_reduction_axes,
@@ -434,7 +425,7 @@ static enum xnn_status setup_reduce_nd(
   return xnn_status_success;
 }
 
-enum xnn_status xnn_create_reduce_nd(
+XNN_NO_SANITIZE_FUNCTION enum xnn_status xnn_create_reduce_nd(
     const enum xnn_reduce_operator reduce_operator_type,
     const enum xnn_datatype datatype,
     const struct xnn_quantization_params* input_quantization,

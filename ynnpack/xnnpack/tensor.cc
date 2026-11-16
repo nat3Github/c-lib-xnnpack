@@ -16,6 +16,23 @@
 #include "ynnpack/xnnpack/utils.h"
 #include "ynnpack/xnnpack/xnnpack.h"
 
+namespace {
+
+uint32_t value_flags_from_xnn(uint32_t flags, bool is_static) {
+  uint32_t ynn = 0;
+  if (!is_static) {
+    if (flags & XNN_VALUE_FLAG_EXTERNAL_INPUT) {
+      ynn |= YNN_VALUE_FLAG_EXTERNAL_INPUT;
+    }
+    if (flags & XNN_VALUE_FLAG_EXTERNAL_OUTPUT) {
+      ynn |= YNN_VALUE_FLAG_EXTERNAL_OUTPUT;
+    }
+  }
+  return ynn;
+}
+
+}  // namespace
+
 extern "C" {
 
 xnn_status xnn_define_tensor_value(xnn_subgraph_t subgraph,
@@ -30,7 +47,7 @@ xnn_status xnn_define_tensor_value(xnn_subgraph_t subgraph,
   const size_t* xnn_dims = data ? dims : nullptr;
   ynn_status status = ynn_define_tensor(
       subgraph->ynn, ynn::type_from_xnn(datatype), num_dims, xnn_dims, data,
-      ynn::value_flags_from_xnn(flags), id_out);
+      value_flags_from_xnn(flags, data != nullptr), id_out);
   if (status != ynn_status_success) {
     return ynn::xnn_status_from_ynn(status);
   }
@@ -75,9 +92,9 @@ xnn_status xnn_define_quantized_tensor_value(
   // YNNPACK interprets non-null dims for non-constant values to be static
   // shapes, so we can't pass them here unless the shape really is static.
   const size_t* xnn_dims = data ? dims : nullptr;
-  ynn_status status = ynn_define_tensor_value(
+  ynn_status status = ynn_define_tensor(
       subgraph->ynn, ynn::type_from_xnn(datatype), num_dims, xnn_dims, data,
-      zero_point_id, scale_id, flags, id_out);
+      value_flags_from_xnn(flags, data != nullptr), id_out);
   if (status != ynn_status_success) {
     return ynn::xnn_status_from_ynn(status);
   }
@@ -90,6 +107,8 @@ xnn_status xnn_define_quantized_tensor_value(
     // below.
     status = value.set_external_shape(num_dims, dims);
   }
+  subgraph->zero_point_ids[*id_out] = zero_point_id;
+  subgraph->scale_ids[*id_out] = scale_id;
   return ynn::xnn_status_from_ynn(status);
 }
 
@@ -120,27 +139,15 @@ xnn_status xnn_define_channelwise_quantized_tensor_value_v3(
     const float* scale, size_t num_dims, size_t channel_dim, const size_t* dims,
     const void* data, uint32_t external_id, uint32_t flags, uint32_t* id_out,
     const float* channelwise_zero_point) {
-  // Channelwise zero points are not supported yet.
-  assert(channelwise_zero_point == nullptr);
-  assert(data);
-  uint32_t zero_point_id = YNN_INVALID_VALUE_ID;
-  if (zero_point != 0) {
-    ynn_status status = ynn_define_tensor(
-        subgraph->ynn, ynn_type_int32, 0, nullptr, &zero_point,
-        YNN_VALUE_FLAG_COPY_DATA, &zero_point_id);
-    if (status != ynn_status_success) {
-      return ynn::xnn_status_from_ynn(status);
-    }
-  }
-
-  // It seems that this API is used in XNNPACK in two different ways:
-  // - For batch matrix multiply filters, this is expected to be a broadcast
-  // only for the non-channel dimension of the "matrix" argument.
-  // - For convolution/depthwise filters, this is expected to be a broadcast in
-  // every dimension except the channel dimension.
-  // For convolutions/depthwise, the channel dimension is 0. So it seems like
-  // maybe a consistent rule here is that every dimension after the channel
-  // dimension is a broadcast, and every dimension before that is elementwise...
+  // The shape of XNNPACK scale data depends on which op is consuming it. We do
+  // our best to estimate the shape here, but this is only correct for some ops.
+  // Some specific examples are:
+  // - Batch matrix multiply: no broadcasts for any batch dimensions.
+  // - Convolution: broadcasts all dimensions except the output channels (0).
+  // - Depthwise convolution: broadcasts all dimensions except the output
+  // channels (3).
+  // This estimation is correct for batch matrix multiply and convolution, but
+  // not depthwise convolution.
   size_t quantization_dims[YNN_MAX_TENSOR_RANK];
   std::copy_n(dims, channel_dim + 1, quantization_dims);
   if (channel_dim > 0) {
@@ -150,22 +157,43 @@ xnn_status xnn_define_channelwise_quantized_tensor_value_v3(
     quantization_dims[channel_dim - 1] = 1;
   }
 
-  // XNNPACK copies the scale data from the caller, do the same here.
-  const uint32_t scale_flags = YNN_VALUE_FLAG_COPY_DATA;
+  uint32_t zero_point_id = YNN_INVALID_VALUE_ID;
+  if (channelwise_zero_point != nullptr) {
+    ynn_status status =
+        ynn_define_tensor(subgraph->ynn, ynn_type_fp32, channel_dim + 1,
+                          quantization_dims, channelwise_zero_point,
+                          /*flags=*/0, &zero_point_id);
+    if (status != ynn_status_success) {
+      return ynn::xnn_status_from_ynn(status);
+    }
+  } else if (zero_point != 0) {
+    ynn_status status = ynn_define_tensor(
+        subgraph->ynn, ynn_type_int32, 0, nullptr, &zero_point,
+        YNN_VALUE_FLAG_COPY_DATA, &zero_point_id);
+    if (status != ynn_status_success) {
+      return ynn::xnn_status_from_ynn(status);
+    }
+  }
+
   uint32_t scale_id = YNN_INVALID_VALUE_ID;
   ynn_status status =
       ynn_define_tensor(subgraph->ynn, ynn_type_fp32, channel_dim + 1,
-                        quantization_dims, scale, scale_flags, &scale_id);
+                        quantization_dims, scale, /*flags=*/0, &scale_id);
   if (status != ynn_status_success) {
     return ynn::xnn_status_from_ynn(status);
   }
 
   *id_out =
       external_id == XNN_INVALID_VALUE_ID ? YNN_INVALID_VALUE_ID : external_id;
-  return ynn::xnn_status_from_ynn(ynn_define_tensor_value(
+  status = ynn_define_tensor(
       subgraph->ynn, ynn::type_from_xnn(datatype), num_dims, dims, data,
-      /*zero_point_id=*/YNN_INVALID_VALUE_ID, scale_id,
-      ynn::value_flags_from_xnn(flags), id_out));
+      value_flags_from_xnn(flags, data != nullptr), id_out);
+  if (status != ynn_status_success) {
+    return ynn::xnn_status_from_ynn(status);
+  }
+  subgraph->scale_ids[*id_out] = scale_id;
+  subgraph->zero_point_ids[*id_out] = zero_point_id;
+  return xnn_status_success;
 }
 
 xnn_status xnn_define_channelwise_quantized_tensor_value_v2(
@@ -228,15 +256,17 @@ xnn_status xnn_define_dynamically_quantized_tensor_value(
 
   *id_out =
       external_id == XNN_INVALID_VALUE_ID ? YNN_INVALID_VALUE_ID : external_id;
-  status = ynn_define_tensor_value(
-      subgraph->ynn, ynn::type_from_xnn(datatype), num_dims, dims,
-      /*data=*/nullptr, zero_point_id, scale_id, flags, id_out);
+  status = ynn_define_tensor(subgraph->ynn, ynn::type_from_xnn(datatype),
+                             num_dims, dims,
+                             /*data=*/nullptr, flags, id_out);
   if (status != ynn_status_success) {
     return ynn::xnn_status_from_ynn(status);
   }
 
   // Store the number of non-batch dimensions where we can find it again.
   subgraph->num_nonbatch_axes[*id_out] = num_nonbatch_dims;
+  subgraph->zero_point_ids[*id_out] = zero_point_id;
+  subgraph->scale_ids[*id_out] = scale_id;
 
   return xnn_status_success;
 }

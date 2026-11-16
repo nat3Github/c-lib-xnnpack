@@ -13,6 +13,9 @@
 
 #include <gtest/gtest.h>
 #include "ynnpack/base/arch.h"  // IWYU pragma: keep
+#include "ynnpack/base/bfloat16.h"
+#include "ynnpack/base/fp8.h"
+#include "ynnpack/base/half.h"
 #include "ynnpack/base/test/buffer.h"
 #include "ynnpack/base/test/fuzz_test.h"
 #include "ynnpack/base/test/random.h"
@@ -52,7 +55,7 @@ void Reference(Tensor<AT> a, Tensor<BT> b, Tensor<CT> c) {
   const size_t K2 = a.extent(2);
   const size_t K1 = a.extent(3);
   ASSERT_EQ(c.extent(0), a.extent(0));
-  ASSERT_EQ(c.extent(1), b.extent(3) * B_info::element_count());
+  ASSERT_EQ(c.extent(1), b.extent(3));
   ASSERT_EQ(K3, b.extent(0));
   ASSERT_EQ(K2, b.extent(1));
   ASSERT_EQ(K1, b.extent(2));
@@ -62,7 +65,7 @@ void Reference(Tensor<AT> a, Tensor<BT> b, Tensor<CT> c) {
       for (size_t k2 = 0; k2 < K2; ++k2) {
         for (size_t k1 = 0; k1 < K1; ++k1) {
           const CT a_ik = static_cast<CT>(a(i, k3, k2, k1));
-          const BT* b_k1 = &b(k3, k2, k1, 0);
+          const BT* b_k1 = address_of(b(k3, k2, k1, 0));
           for (size_t j = 0; j < c.extent(1); ++j) {
             c_i[j] = c_i[j] + a_ik * static_cast<CT>(B_info::get(b_k1, j));
           }
@@ -70,6 +73,19 @@ void Reference(Tensor<AT> a, Tensor<BT> b, Tensor<CT> c) {
       }
     }
   }
+}
+
+void Reference(Tensor<half> a, Tensor<half> b, Tensor<float> c) {
+  Reference(a.convert<float>(), b.convert<float>(), c);
+}
+void Reference(Tensor<bfloat16> a, Tensor<bfloat16> b, Tensor<float> c) {
+  Reference(a.convert<float>(), b.convert<float>(), c);
+}
+void Reference(Tensor<fp8_e4m3> a, Tensor<fp8_e4m3> b, Tensor<float> c) {
+  Reference(a.convert<float>(), b.convert<float>(), c);
+}
+void Reference(Tensor<fp8_e5m2> a, Tensor<fp8_e5m2> b, Tensor<float> c) {
+  Reference(a.convert<float>(), b.convert<float>(), c);
 }
 
 struct KernelInfo {
@@ -86,8 +102,6 @@ struct KernelInfo {
 template <typename AT, typename BT, typename CT>
 void TestMatMul(AT, BT, CT, const DotShape& shape, const KernelInfo& kernel,
                 bool init_zero = false) {
-  using B_info = type_info<BT>;
-
   ReplicableRandomDevice rng;
 
   const size_t tile_m = kernel.tile_m;
@@ -102,7 +116,7 @@ void TestMatMul(AT, BT, CT, const DotShape& shape, const KernelInfo& kernel,
   const float max_abs_value = 10.0f;
 
   Tensor<AT> a({m, k});
-  Tensor<BT> b({k, n / B_info::element_count()},
+  Tensor<BT> b({k, n},
                Alignment{.bytes = (unpacked_b ? 1 : tile_n) * sizeof(BT)});
   Tensor<CT> c({m, n});
   Tensor<CT> expected;
@@ -122,20 +136,19 @@ void TestMatMul(AT, BT, CT, const DotShape& shape, const KernelInfo& kernel,
   Tensor<BT> packed_b = unpacked_b ? b : pack_b(b, tile_k, tile_n);
   Tensor<AT> packed_a = pack_a ? transpose_a(a, tile_m, tile_k) : a;
 
-  kernel.kernel(m, n, 1, 1, k, packed_a.stride(0) * sizeof(AT), 0, 0,
-                packed_a.base(), 0, 0, packed_b.stride(0) * sizeof(BT) / tile_k,
-                packed_b.base(), c.stride(0) * sizeof(CT),
-                init_zero ? nullptr : c.base(), c.stride(0) * sizeof(CT),
-                c.base());
+  kernel.kernel(m, n, 1, 1, k, packed_a.stride_bytes(0) / (pack_a ? tile_k : 1),
+                0, 0, packed_a.base(), 0, 0, packed_b.stride_bytes(0) / tile_k,
+                packed_b.base(), c.stride_bytes(0),
+                init_zero ? nullptr : c.base(), c.stride_bytes(0), c.base());
 
   // Verify results.
   Reference(a, b, expected);
   for (const auto& i : EnumerateIndices({m, n})) {
-    if (std::is_integral<CT>::value) {
+    if (is_integral<CT>::value) {
       ASSERT_EQ(c(i), expected(i)) << shape;
     } else {
-      const float tolerance = epsilon(type_of<CT>()) * (k + 1) * max_abs_value *
-                              max_abs_value * 2.0f;
+      const float tolerance = type_info<CT>::epsilon() * (k + 1) *
+                              max_abs_value * max_abs_value * 2.0f;
       ASSERT_NEAR(c(i), expected(i), tolerance) << shape;
     }
   }
@@ -151,24 +164,26 @@ void TestConv2D(AT, BT, CT, const KernelInfo& kernel) {
   const size_t tile_m = kernel.tile_m;
   const size_t tile_n = kernel.tile_n;
   const size_t tile_k = kernel.tile_k;
+  // We assume that coverage of unaligned m comes from the basic dot tests, and
+  // we only need to test the k2 and k3 loops here.
+  const size_t w = kernel.block_shape.m;
   const bool pack_a = kernel.flags & dot_flag::transpose_a;
 
   // We always have m = 1, because that would just be a batch dimension here,
   // it does not exercise the dot kernel API.
   // TODO: Try to parameterize the test on this.
   struct Conv2DShape {
-    size_t w, kw, kh, co, ci;
+    size_t kw, kh, co, ci;
   };
 
   const auto cos = simd_sizes_up_to(block_shape.n, B_info::element_count());
   std::vector<Conv2DShape> shapes;
-  for (size_t w = 1; w <= block_shape.m; ++w) {
-    for (size_t kw : {1, 3}) {
-      for (size_t kh : {2}) {
-        for (size_t co : cos) {
-          for (size_t ci = tile_k; ci <= tile_k * 3; ci += tile_k) {
-            shapes.push_back({w, kw, kh, co, ci});
-          }
+  shapes.reserve(2 * 1 * cos.size() * 3);
+  for (size_t kw : {1, 3}) {
+    for (size_t kh : {2}) {
+      for (size_t co : cos) {
+        for (size_t ci = tile_k; ci <= tile_k * 3; ci += tile_k) {
+          shapes.push_back({kw, kh, co, ci});
         }
       }
     }
@@ -177,7 +192,6 @@ void TestConv2D(AT, BT, CT, const KernelInfo& kernel) {
   const float max_abs_value = 10.0f;
 
   for (const Conv2DShape& shape : shapes) {
-    const size_t w = shape.w;
     const size_t kw = shape.kw;
     const size_t kh = shape.kh;
     const size_t co = shape.co;
@@ -186,8 +200,7 @@ void TestConv2D(AT, BT, CT, const KernelInfo& kernel) {
     Tensor<AT> a({kh, w + kw - 1, ci});
     // dot kernels assume that the rows of b are aligned to a multiple of
     // block_n.
-    Tensor<BT> b({kh, kw, ci, co / B_info::element_count()},
-                 Alignment{.bytes = tile_n * sizeof(BT)});
+    Tensor<BT> b({kh, kw, ci, co}, Alignment{.bytes = tile_n * sizeof(BT)});
     Tensor<CT> c({w, co});
 
     fill_random(a.data(), a.size(), rng, -max_abs_value, max_abs_value);
@@ -222,26 +235,22 @@ void TestConv2D(AT, BT, CT, const KernelInfo& kernel) {
     // tile_n. The kernel might also require b to be packed (tile_k > 1).
     Tensor<BT> packed_b = pack_b(b, tile_k, tile_n);
 
-    b = b.crop_padding({0, 0, 0, 0},
-                       {0, 0, 0, b.extent(3) - co / B_info::element_count()});
-
     kernel.kernel(
-        w, co, kh, kw, ci, packed_a.stride(0) * sizeof(AT),
-        packed_a.stride(1) * sizeof(AT), packed_a.stride(2) * sizeof(AT),
-        packed_a.base(), packed_b.stride(0) * sizeof(BT),
-        packed_b.stride(1) * sizeof(BT),
-        packed_b.stride(2) * sizeof(BT) / tile_k, packed_b.base(),
-        c.stride(0) * sizeof(CT), c.base(), c.stride(0) * sizeof(CT), c.base());
+        w, co, kh, kw, ci, packed_a.stride_bytes(0) / (pack_a ? tile_k : 1),
+        packed_a.stride_bytes(1), packed_a.stride_bytes(2), packed_a.base(),
+        packed_b.stride_bytes(0), packed_b.stride_bytes(1),
+        packed_b.stride_bytes(2) / tile_k, packed_b.base(), c.stride_bytes(0),
+        c.base(), c.stride_bytes(0), c.base());
 
     // Verify results.
     a = make_stencil_dim(a, 1, kw).transpose({2, 0, 1, 3});
     // a dimensions are now {n, kh, kw, ci}
     Reference(a, b, expected);
     for (const auto& i : EnumerateIndices({w, co})) {
-      if (std::is_integral<CT>::value) {
+      if (is_integral<CT>::value) {
         ASSERT_EQ(c(i), expected(i));
       } else {
-        const float tolerance = epsilon(type_of<CT>()) * (ci * kh * kw + 1) *
+        const float tolerance = type_info<CT>::epsilon() * (ci * kh * kw + 1) *
                                 max_abs_value * max_abs_value * 2.0f;
         ASSERT_NEAR(c(i), expected(i), tolerance);
       }

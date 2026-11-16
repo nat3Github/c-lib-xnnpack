@@ -38,11 +38,9 @@ bool has_multiple_inputs(const std::set<uint32_t>& relevant_values,
   return false;
 }
 
-std::optional<ynn_subgraph> clone_subgraph_subset(const ynn_subgraph& subgraph,
-                                                  uint32_t input_id,
-                                                  uint32_t output_id,
-                                                  uint32_t& cloned_input_id,
-                                                  uint32_t& cloned_output_id) {
+slinky::ref_count<ynn_subgraph> clone_subgraph_subset(
+    const ynn_subgraph& subgraph, uint32_t input_id, uint32_t output_id,
+    uint32_t& cloned_input_id, uint32_t& cloned_output_id) {
   assert(subgraph.is_valid_value(input_id));
   assert(subgraph.is_valid_value(output_id));
   assert(input_id != output_id);
@@ -64,14 +62,6 @@ std::optional<ynn_subgraph> clone_subgraph_subset(const ynn_subgraph& subgraph,
   while (head < values_to_traverse.size()) {
     uint32_t curr_id = values_to_traverse[head++];
 
-    const ynn_value& val = subgraph.value(curr_id);
-    if (val.scale_id != YNN_INVALID_VALUE_ID) {
-      add_value_for_traversal(val.scale_id);
-    }
-    if (val.zero_point_id != YNN_INVALID_VALUE_ID) {
-      add_value_for_traversal(val.zero_point_id);
-    }
-
     if (curr_id == input_id) {
       continue;
     }
@@ -89,17 +79,18 @@ std::optional<ynn_subgraph> clone_subgraph_subset(const ynn_subgraph& subgraph,
 
   if (relevant_values.find(input_id) == relevant_values.end()) {
     // The input is not connected to the output, so we can't clone it.
-    return std::nullopt;
+    return nullptr;
   }
 
   if (has_multiple_inputs(relevant_values, input_id, subgraph,
                           relevant_nodes)) {
     // Fail if there are multiple inputs connected to the output.
-    return std::nullopt;
+    return nullptr;
   }
 
   // Create new subgraph.
-  ynn_subgraph new_subgraph(/*external_value_ids=*/0, subgraph.flags);
+  slinky::ref_count<ynn_subgraph> new_subgraph =
+      new ynn_subgraph(/*external_value_ids=*/0, subgraph.flags);
   std::map<uint32_t, uint32_t> old_to_new_id;
 
   // Helper to clone values. Returns the ID of the new value.
@@ -108,7 +99,7 @@ std::optional<ynn_subgraph> clone_subgraph_subset(const ynn_subgraph& subgraph,
     if (old_to_new_id.count(old_id)) return old_to_new_id[old_id];
 
     // Create new value.
-    ynn_value& new_val = new_subgraph.new_internal_value();
+    ynn_value& new_val = new_subgraph->new_internal_value();
     const ynn_value& old_val = subgraph.value(old_id);
 
     // Copy all fields except quantization parameters. We'll handle those
@@ -150,15 +141,6 @@ std::optional<ynn_subgraph> clone_subgraph_subset(const ynn_subgraph& subgraph,
     clone_or_get_new_value(old_id);
   }
 
-  // Now fix up quantization links.
-  for (uint32_t old_id : relevant_values) {
-    uint32_t new_id = old_to_new_id[old_id];
-    const ynn_value& old_val = subgraph.value(old_id);
-    ynn_value& new_val = new_subgraph.value(new_id);
-    new_val.scale_id = clone_or_get_new_value(old_val.scale_id);
-    new_val.zero_point_id = clone_or_get_new_value(old_val.zero_point_id);
-  }
-
   // Clone nodes in topological order.
   for (const auto& node : subgraph.nodes) {
     if (relevant_nodes.find(&node) != relevant_nodes.end()) {
@@ -173,7 +155,7 @@ std::optional<ynn_subgraph> clone_subgraph_subset(const ynn_subgraph& subgraph,
         new_node.outputs.push_back(clone_or_get_new_value(old_out));
       }
 
-      new_subgraph.add_node(std::move(new_node));
+      new_subgraph->add_node(std::move(new_node));
     }
   }
 
@@ -227,13 +209,23 @@ bool allow_in_place(uint32_t input_id, uint32_t output_id,
     return false;
   }
 
-  if (is_broadcast_op<ynn_node::broadcast>(*producer) ||
-      is_broadcast_op<ynn_node::broadcast_like>(*producer)) {
+  if (is_broadcast_op<ynn_node::broadcast_like>(*producer)) {
     // We can't compute in place with a broadcast input.
     return false;
   }
 
   return true;
+}
+
+int compute_allow_in_place(const ynn_node& node, const ynn_subgraph& subgraph) {
+  assert(node.outputs.size() == 1);
+  int result = 0;
+  for (int i = 0; i < node.inputs.size(); ++i) {
+    if (allow_in_place(node.inputs[i], node.outputs[0], subgraph)) {
+      result |= 1 << i;
+    }
+  }
+  return result;
 }
 
 }  // namespace ynn

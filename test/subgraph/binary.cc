@@ -240,14 +240,14 @@ void TestImpl(const Param& p) {
             const float a_i = dequantize(a(i), a_quantization);
             const float b_i = dequantize(b(i), b_quantization);
             float expected = compute_float(p.op, a_i, b_i);
-            expected = std::max<float>(expected, params.output_min);
-            expected = std::min<float>(expected, params.output_max);
-            expected = fake_quantize(expected, output_quantization);
-            expected = std::max<float>(expected, NumericLimits<T>::min());
-            expected = std::min<float>(expected, NumericLimits<T>::max());
             if (std::isnan(expected)) {
               // We don't know how to represent NaN for quantized datatypes.
             } else {
+              expected = std::max<float>(expected, params.output_min);
+              expected = std::min<float>(expected, params.output_max);
+              expected = fake_quantize(expected, output_quantization);
+              expected = std::max<float>(expected, NumericLimits<T>::min());
+              expected = std::min<float>(expected, NumericLimits<T>::max());
               ASSERT_NEAR(expected, output(i), 1)
                   << "i = " << index_to_string(i)
                   << ", a_shape=" << index_to_string(a_shape)
@@ -373,7 +373,13 @@ const xnn_binary_operator all_real_ops[] = {
 };
 // clang-format on
 
+#ifndef XNNPACK_USE_YNNPACK
 auto all_ranks = testing::Range(0, XNN_MAX_TENSOR_DIMS);
+#else
+// TODO(b/501469601): Avoid excessive slow testing in YNNPACK. YNNPACK does not
+// have any special case code for rank >= 2 anyways.
+auto all_ranks = testing::Range(0, 3);
+#endif
 
 INSTANTIATE_TEST_SUITE_P(BinaryTest, IntegerOps,
                          testing::ConvertGenerator<Param::TupleT>(

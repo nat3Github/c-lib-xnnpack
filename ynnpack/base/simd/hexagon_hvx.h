@@ -97,7 +97,7 @@ struct vec<int32_t, 32> {
 
   vec() = default;
   explicit vec(HVX_Vector v) : v(v) {}
-  vec(int16_t x) : v(Q6_V_vsplat_R(x)) {}  // NOLINT
+  vec(int32_t x) : v(Q6_V_vsplat_R(x)) {}  // NOLINT
 
   HVX_Vector v;
 };
@@ -109,7 +109,7 @@ struct vec<uint8_t, 128> {
 
   vec() = default;
   explicit vec(HVX_Vector v) : v(v) {}
-  vec(int16_t x) : v(Q6_V_vsplat_R(internal::splat8x4(x))) {}  // NOLINT
+  vec(uint8_t x) : v(Q6_V_vsplat_R(internal::splat8x4(x))) {}  // NOLINT
 
   HVX_Vector v;
 };
@@ -121,7 +121,7 @@ struct vec<int8_t, 128> {
 
   vec() = default;
   explicit vec(HVX_Vector v) : v(v) {}
-  vec(int16_t x) : v(Q6_V_vsplat_R(internal::splat8x4(x))) {}  // NOLINT
+  vec(int8_t x) : v(Q6_V_vsplat_R(internal::splat8x4(x))) {}  // NOLINT
 
   HVX_Vector v;
 };
@@ -406,6 +406,25 @@ YNN_ALWAYS_INLINE void store(int8_t* ptr, s8x128 b, size_t n) {
   internal::partial_store(ptr, b.v, n);
 }
 
+YNN_ALWAYS_INLINE f32x32 operator+(f32x32 a, f32x32 b) {
+  return f32x32{Q6_Vsf_vadd_VsfVsf(a.v, b.v)};
+}
+YNN_ALWAYS_INLINE f32x32 operator-(f32x32 a, f32x32 b) {
+  return f32x32{Q6_Vsf_vsub_VsfVsf(a.v, b.v)};
+}
+YNN_ALWAYS_INLINE f32x32 operator*(f32x32 a, f32x32 b) {
+  return f32x32{Q6_Vsf_vmpy_VsfVsf(a.v, b.v)};
+}
+
+YNN_ALWAYS_INLINE HVX_VectorPred isfinite(f32x32 a) {
+  HVX_Vector abs_a = Q6_V_vand_VV(a.v, Q6_V_vsplat_R(0x7FFFFFFF));
+  return Q6_Q_vcmp_gt_VwVw(Q6_V_vsplat_R(0x7F800000), abs_a);
+}
+
+YNN_ALWAYS_INLINE f32x32 select(HVX_VectorPred cond, f32x32 a, f32x32 b) {
+  return f32x32{Q6_V_vmux_QVV(cond, a.v, b.v)};
+}
+
 YNN_ALWAYS_INLINE s32x32 operator+(s32x32 a, s32x32 b) {
   return s32x32{Q6_Vw_vadd_VwVw(a.v, b.v)};
 }
@@ -482,13 +501,26 @@ YNN_ALWAYS_INLINE s8x128 max(s8x128 a, s8x128 b) {
   return s8x128{Q6_Vb_vmax_VbVb(a.v, b.v)};
 }
 
+YNN_ALWAYS_INLINE float horizontal_sum(f32x32 x) {
+  x.v = Q6_Vsf_vadd_VsfVsf(x.v, Q6_V_vror_VR(x.v, 64));
+  x.v = Q6_Vsf_vadd_VsfVsf(x.v, Q6_V_vror_VR(x.v, 32));
+  x.v = Q6_Vsf_vadd_VsfVsf(x.v, Q6_V_vror_VR(x.v, 16));
+  x.v = Q6_Vsf_vadd_VsfVsf(x.v, Q6_V_vror_VR(x.v, 8));
+  x.v = Q6_Vsf_vadd_VsfVsf(x.v, Q6_V_vror_VR(x.v, 4));
+  float result;
+  memcpy(&result, &x.v, sizeof(float));
+  return result;
+}
+
 YNN_ALWAYS_INLINE int32_t horizontal_sum(s32x32 x) {
   x.v = Q6_Vw_vadd_VwVw(x.v, Q6_V_vror_VR(x.v, 64));
   x.v = Q6_Vw_vadd_VwVw(x.v, Q6_V_vror_VR(x.v, 32));
   x.v = Q6_Vw_vadd_VwVw(x.v, Q6_V_vror_VR(x.v, 16));
   x.v = Q6_Vw_vadd_VwVw(x.v, Q6_V_vror_VR(x.v, 8));
   x.v = Q6_Vw_vadd_VwVw(x.v, Q6_V_vror_VR(x.v, 4));
-  return *(int32_t*)&x.v;
+  int32_t result;
+  memcpy(&result, &x.v, sizeof(int32_t));
+  return result;
 }
 
 YNN_ALWAYS_INLINE float horizontal_min(f32x32 x) {
@@ -497,7 +529,9 @@ YNN_ALWAYS_INLINE float horizontal_min(f32x32 x) {
   x.v = Q6_Vsf_vmin_VsfVsf(x.v, Q6_V_vror_VR(x.v, 16));
   x.v = Q6_Vsf_vmin_VsfVsf(x.v, Q6_V_vror_VR(x.v, 8));
   x.v = Q6_Vsf_vmin_VsfVsf(x.v, Q6_V_vror_VR(x.v, 4));
-  return *(float*)&x.v;
+  float result;
+  memcpy(&result, &x.v, sizeof(float));
+  return result;
 }
 YNN_ALWAYS_INLINE half horizontal_min(f16x64 x) {
   x.v = Q6_Vhf_vmin_VhfVhf(x.v, Q6_V_vror_VR(x.v, 64));
@@ -514,7 +548,9 @@ YNN_ALWAYS_INLINE int32_t horizontal_min(s32x32 x) {
   x.v = Q6_Vw_vmin_VwVw(x.v, Q6_V_vror_VR(x.v, 16));
   x.v = Q6_Vw_vmin_VwVw(x.v, Q6_V_vror_VR(x.v, 8));
   x.v = Q6_Vw_vmin_VwVw(x.v, Q6_V_vror_VR(x.v, 4));
-  return *(int32_t*)&x.v;
+  int32_t result;
+  memcpy(&result, &x.v, sizeof(int32_t));
+  return result;
 }
 YNN_ALWAYS_INLINE int16_t horizontal_min(s16x64 x) {
   x.v = Q6_Vh_vmin_VhVh(x.v, Q6_V_vror_VR(x.v, 64));
@@ -551,7 +587,9 @@ YNN_ALWAYS_INLINE float horizontal_max(f32x32 x) {
   x.v = Q6_Vsf_vmax_VsfVsf(x.v, Q6_V_vror_VR(x.v, 16));
   x.v = Q6_Vsf_vmax_VsfVsf(x.v, Q6_V_vror_VR(x.v, 8));
   x.v = Q6_Vsf_vmax_VsfVsf(x.v, Q6_V_vror_VR(x.v, 4));
-  return *(float*)&x.v;
+  float result;
+  memcpy(&result, &x.v, sizeof(float));
+  return result;
 }
 YNN_ALWAYS_INLINE half horizontal_max(f16x64 x) {
   x.v = Q6_Vhf_vmax_VhfVhf(x.v, Q6_V_vror_VR(x.v, 64));
@@ -568,7 +606,9 @@ YNN_ALWAYS_INLINE int32_t horizontal_max(s32x32 x) {
   x.v = Q6_Vw_vmax_VwVw(x.v, Q6_V_vror_VR(x.v, 16));
   x.v = Q6_Vw_vmax_VwVw(x.v, Q6_V_vror_VR(x.v, 8));
   x.v = Q6_Vw_vmax_VwVw(x.v, Q6_V_vror_VR(x.v, 4));
-  return *(int32_t*)&x.v;
+  int32_t result;
+  memcpy(&result, &x.v, sizeof(int32_t));
+  return result;
 }
 YNN_ALWAYS_INLINE int16_t horizontal_max(s16x64 x) {
   x.v = Q6_Vh_vmax_VhVh(x.v, Q6_V_vror_VR(x.v, 64));
@@ -604,29 +644,29 @@ using s32x64 = simd::vec<int32_t, 64>;
 using s32x128 = simd::vec<int32_t, 128>;
 using s16x128 = simd::vec<int16_t, 128>;
 
-YNN_ALWAYS_INLINE s16x128 convert(s8x128 x, int16_t) {
+YNN_ALWAYS_INLINE s16x128 cast(s8x128 x, int16_t) {
   HVX_VectorPair result = Q6_Wh_vunpack_Vb(x.v);
   return {s16x64{Q6_V_lo_W(result)}, s16x64{Q6_V_hi_W(result)}};
 }
-YNN_ALWAYS_INLINE s16x128 convert(u8x128 x, int16_t) {
+YNN_ALWAYS_INLINE s16x128 cast(u8x128 x, int16_t) {
   HVX_VectorPair result = Q6_Wuh_vunpack_Vub(x.v);
   return {s16x64{Q6_V_lo_W(result)}, s16x64{Q6_V_hi_W(result)}};
 }
 
-YNN_ALWAYS_INLINE s32x64 convert(s16x64 x, int32_t) {
+YNN_ALWAYS_INLINE s32x64 cast(s16x64 x, int32_t) {
   HVX_VectorPair result = Q6_Ww_vunpack_Vh(x.v);
   return {s32x32{Q6_V_lo_W(result)}, s32x32{Q6_V_hi_W(result)}};
 }
 
-YNN_ALWAYS_INLINE s32x128 convert(s8x128 x, int32_t) {
+YNN_ALWAYS_INLINE s32x128 cast(s8x128 x, int32_t) {
   HVX_VectorPair s16 = Q6_Wh_vunpack_Vb(x.v);
-  return {convert(s16x64{Q6_V_lo_W(s16)}, int32_t{}),
-          convert(s16x64{Q6_V_hi_W(s16)}, int32_t{})};
+  return {cast(s16x64{Q6_V_lo_W(s16)}, int32_t{}),
+          cast(s16x64{Q6_V_hi_W(s16)}, int32_t{})};
 }
-YNN_ALWAYS_INLINE s32x128 convert(u8x128 x, int32_t) {
+YNN_ALWAYS_INLINE s32x128 cast(u8x128 x, int32_t) {
   HVX_VectorPair s16 = Q6_Wuh_vunpack_Vub(x.v);
-  return {convert(s16x64{Q6_V_lo_W(s16)}, int32_t{}),
-          convert(s16x64{Q6_V_hi_W(s16)}, int32_t{})};
+  return {cast(s16x64{Q6_V_lo_W(s16)}, int32_t{}),
+          cast(s16x64{Q6_V_hi_W(s16)}, int32_t{})};
 }
 
 template <typename ElemSizeBits>
@@ -640,6 +680,6 @@ YNN_ALWAYS_INLINE std::tuple<u8x128, u8x128> interleave(
 
 }  // namespace ynn
 
-#include "ynnpack/base/simd/generic.inc"  // IWYU pragma: export
+#include "ynnpack/base/simd/extend_vec.inc"  // IWYU pragma: export
 
 #endif  // XNNPACK_YNNPACK_BASE_SIMD_HEXAGON_HVX_H_

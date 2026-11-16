@@ -131,7 +131,7 @@ static const struct xnn_binary_elementwise_config* init_config(
   }
 }
 
-static enum xnn_status init_binary_elementwise_nd(
+static XNN_NO_SANITIZE_FUNCTION enum xnn_status init_binary_elementwise_nd(
     xnn_operator_t op, enum xnn_binary_operator type,
     enum xnn_datatype datatype,
     const struct xnn_quantization_params* a_quantization,
@@ -247,6 +247,7 @@ enum xnn_status xnn_create_binary_elementwise_nd(
     xnn_log_error("failed to allocate %zu bytes for %s operator descriptor",
                   sizeof(struct compute_parameters),
                   xnn_binary_operator_to_string(type));
+    xnn_delete_operator(op);
     return xnn_status_out_of_memory;
   }
   op->num_compute_invocations = 1;

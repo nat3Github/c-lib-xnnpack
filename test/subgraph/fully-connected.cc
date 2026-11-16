@@ -221,7 +221,7 @@ void TestStaticB(xnn_datatype convert_to = xnn_datatype_invalid,
   auto input_gen = MakeDatatypeGenerator(Input());
   auto output_gen = MakeDatatypeGenerator(Output());
   std::uniform_int_distribution<> channels_dist{1, 100};
-  std::uniform_real_distribution<> zero_point_dist{-1.5f, -0.5f};
+  std::uniform_real_distribution<float> zero_point_dist{-1.5f, -0.5f};
   // TODO(b/408280445): The rank should go down to 1, but hits a bug in QP8
   // code paths that assume the LHS has rank >= 2.
   std::uniform_int_distribution<> rank_dist{2, XNN_MAX_TENSOR_DIMS - 1};
@@ -238,6 +238,13 @@ void TestStaticB(xnn_datatype convert_to = xnn_datatype_invalid,
       // Align the input channels to the number of filter elements per byte.
       input_channels = round_up(input_channels, filter_channel_factor);
     }
+#ifdef XNNPACK_USE_YNNPACK
+    // In XNNPACK, the weights for sub-byte types are treated as if they are
+    // transposed, which means we need to transpose them again to make the
+    // weights consistent with other types, which means we need the output
+    // channels to be aligned to the number of elements per byte too.
+    output_channels = round_up(output_channels, filter_channel_factor);
+#endif
 
     uint32_t flags = 0;
     if (filter_channel_factor > 1) {
@@ -397,6 +404,10 @@ void TestStaticB(xnn_datatype convert_to = xnn_datatype_invalid,
       GTEST_SKIP();
       return;
     }
+    // CreateRuntime may also fail with unsupported_parameter for configs that
+    // have no available microkernel. Assert success so we never proceed to
+    // reshape a null runtime, which segfaults
+    ASSERT_EQ(xnn_status_success, status);
 
     // Run the subgraph twice, with a different input/output shape each time
     // (except for the input/output channels, which are determined by the filter
@@ -468,7 +479,12 @@ void TestStaticB(xnn_datatype convert_to = xnn_datatype_invalid,
         }
       } else {
         const float max_a = MaxDatatype(Input());
-        const float max_b = MaxDatatype(Filter()) * filter_quantization.scale;
+        float max_b = MaxDatatype(Filter()) * filter_quantization.scale;
+        // For qd8_qc2w the range of channelwise ZP in this test is
+        // [-1.5, -0.5], which needs to be accounted for here.
+        if (is_qd8_qc2w) {
+          max_b += 1.5f * filter_quantization.scale;
+        }
         const float max_bias =
             bias.empty() ? 0.0f
                          : max_abs_bias<Bias>() * bias_quantization.scale;
@@ -490,21 +506,20 @@ void TestStaticB(xnn_datatype convert_to = xnn_datatype_invalid,
 
 TEST(FullyConnectedQC8, static_b) { TestStaticB<qint8, qcint8, qcint32>(); }
 TEST(FullyConnectedQS8, static_b) { TestStaticB<qint8, qint8, qint32>(); }
-#ifndef XNNPACK_USE_YNNPACK
 TEST(FullyConnectedQU8, static_b) { TestStaticB<quint8, quint8, qint32>(); }
-#endif  // XNNPACK_USE_YNNPACK
 
 TEST(FullyConnectedQS8QC8W, static_b) { TestStaticB<qint8, qcint8, qcint32>(); }
-#ifndef XNNPACK_USE_YNNPACK
 TEST(FullyConnectedQS8QC4W, static_b) { TestStaticB<qint8, qcint4, qcint32>(); }
 TEST(FullyConnectedQS8QC2W, static_b) { TestStaticB<qint8, qcint2, qcint32>(); }
-#endif  // XNNPACK_USE_YNNPACK
 
 TEST(FullyConnectedF16F32F16, static_b) {
   TestStaticB<xnn_float16, float, float>();
 }
 TEST(FullyConnectedF16, static_b) {
   TestStaticB<xnn_float16, xnn_float16, xnn_float16>();
+}
+TEST(FullyConnectedF16F16F32, static_b) {
+  TestStaticB<xnn_float16, xnn_float16, float>();
 }
 TEST(FullyConnectedF32, static_b) { TestStaticB<float, float, float>(); }
 TEST(FullyConnectedF32F16F16, static_b) {
@@ -534,7 +549,6 @@ TEST(FullyConnectedBF16F32, static_b) {
   TestStaticB<xnn_bfloat16, xnn_bfloat16, float, float>();
 }
 
-#ifndef XNNPACK_USE_YNNPACK
 TEST(FullyConnectedQD8F16QC2W, static_b) {
   TestStaticB<xnn_float16, qcint2, float>(/*convert_to=*/xnn_datatype_qdint8);
 }
@@ -542,18 +556,16 @@ TEST(FullyConnectedQD8F16QC2W, static_b) {
 TEST(FullyConnectedQD8F16QC4W, static_b) {
   TestStaticB<xnn_float16, qcint4, float>(/*convert_to=*/xnn_datatype_qdint8);
 }
-#endif  // XNNPACK_USE_YNNPACK
+
 TEST(FullyConnectedQD8F16QC8W, static_b) {
   TestStaticB<xnn_float16, qcint8, float>(/*convert_to=*/xnn_datatype_qdint8);
 }
-#ifndef XNNPACK_USE_YNNPACK
 TEST(FullyConnectedQD8F32QC4W, static_b) {
   TestStaticB<float, qcint4, float>(/*convert_to=*/xnn_datatype_qdint8);
 }
 TEST(FullyConnectedQD8F32QC2W, static_b) {
   TestStaticB<float, qcint2, float>(/*convert_to=*/xnn_datatype_qdint8);
 }
-#endif  // XNNPACK_USE_YNNPACK
 TEST(FullyConnectedQD8F32QC8W, static_b) {
   TestStaticB<float, qcint8, float>(/*convert_to=*/xnn_datatype_qdint8);
 }
@@ -591,6 +603,12 @@ TEST(FullyConnectedQD8F32QB4W_BF16, static_b) {
 }
 TEST(FullyConnectedQD8F32QB4W_F16, static_b) {
   TestStaticB<float, qcint4, float, float, xnn_float16>(
+      /*convert_to=*/xnn_datatype_qdint8, /*block_size=*/32);
+}
+// bf16 output only supports bf16-typed blockwise scales (there is no
+// qd8_bf16_qb4w_f16_scales create variant), so no _F16 counterpart here.
+TEST(FullyConnectedQD8BF16QB4W_BF16, static_b) {
+  TestStaticB<float, qcint4, float, xnn_bfloat16, xnn_bfloat16>(
       /*convert_to=*/xnn_datatype_qdint8, /*block_size=*/32);
 }
 #endif  // XNNPACK_USE_YNNPACK
@@ -662,6 +680,10 @@ void TestDynamicB(xnn_datatype convert_to = xnn_datatype_invalid,
       GTEST_SKIP();
       return;
     }
+    // CreateRuntime may also fail with unsupported_parameter for configs that
+    // have no available microkernel. Assert success so we never proceed to
+    // reshape a null runtime, which segfaults
+    ASSERT_EQ(xnn_status_success, status);
 
     // Run the subgraph twice, with a different input/output shape each time.
     for (int reshape = 0; reshape < 2; ++reshape) {
@@ -756,6 +778,149 @@ TEST(FullyConnectedF16, dynamic_b) {
 }
 TEST(FullyConnectedF32, dynamic_b) {
   TestDynamicB<float, float, float, float>();
+}
+
+#ifndef XNNPACK_USE_YNNPACK
+TEST(FullyConnectedQS8, filter_zero_point_must_be_zero) {
+  ASSERT_EQ(xnn_status_success, xnn_initialize(nullptr));
+
+  xnn_subgraph_t subgraph = nullptr;
+  ASSERT_EQ(xnn_status_success, xnn_create_subgraph(3, 0, &subgraph));
+
+  const size_t input_dims[] = {1, 4};
+  uint32_t input_id = XNN_INVALID_VALUE_ID;
+  ASSERT_EQ(xnn_status_success,
+            xnn_define_quantized_tensor_value(
+                subgraph, xnn_datatype_qint8, /*zero_point=*/0,
+                /*scale=*/0.75f, /*num_dims=*/2, input_dims,
+                /*data=*/nullptr, /*external_id=*/0,
+                XNN_VALUE_FLAG_EXTERNAL_INPUT, &input_id));
+
+  const size_t filter_dims[] = {3, 4};
+  int8_t filter_data[12] = {};
+  uint32_t filter_id = XNN_INVALID_VALUE_ID;
+  ASSERT_EQ(xnn_status_success,
+            xnn_define_quantized_tensor_value(
+                subgraph, xnn_datatype_qint8, /*zero_point=*/1,
+                /*scale=*/0.5f, /*num_dims=*/2, filter_dims, filter_data,
+                XNN_INVALID_VALUE_ID, /*flags=*/0, &filter_id));
+
+  const size_t output_dims[] = {1, 3};
+  uint32_t output_id = XNN_INVALID_VALUE_ID;
+  ASSERT_EQ(xnn_status_success,
+            xnn_define_quantized_tensor_value(
+                subgraph, xnn_datatype_qint8, /*zero_point=*/0,
+                /*scale=*/0.25f, /*num_dims=*/2, output_dims,
+                /*data=*/nullptr, /*external_id=*/1,
+                XNN_VALUE_FLAG_EXTERNAL_OUTPUT, &output_id));
+
+  ASSERT_EQ(xnn_status_invalid_parameter,
+            xnn_define_fully_connected(
+                subgraph, -128.0f, 127.0f, input_id, filter_id,
+                XNN_INVALID_VALUE_ID, output_id, /*flags=*/0));
+
+  xnn_delete_subgraph(subgraph);
+}
+#endif  // XNNPACK_USE_YNNPACK
+
+// Regression test: fully-connected with a zero-dimensional input must not
+// cause a heap-buffer-overflow via unsigned underflow on num_dims - 1.
+TEST(FullyConnectedF32, zero_dim_input_rejected) {
+  ASSERT_EQ(xnn_status_success, xnn_initialize(nullptr));
+
+  xnn_subgraph_t subgraph = nullptr;
+  ASSERT_EQ(xnn_status_success, xnn_create_subgraph(3, 0, &subgraph));
+
+  uint32_t input_id = XNN_INVALID_VALUE_ID;
+  ASSERT_EQ(xnn_status_success,
+            xnn_define_tensor_value(subgraph, xnn_datatype_fp32, 0, nullptr,
+                                   nullptr, 0, XNN_VALUE_FLAG_EXTERNAL_INPUT,
+                                   &input_id));
+
+  float filter = 1.0f;
+  size_t filter_dims[] = {1, 1};
+  uint32_t filter_id = XNN_INVALID_VALUE_ID;
+  ASSERT_EQ(xnn_status_success,
+            xnn_define_tensor_value(subgraph, xnn_datatype_fp32, 2,
+                                   filter_dims, &filter, XNN_INVALID_VALUE_ID,
+                                   0, &filter_id));
+
+  uint32_t output_id = XNN_INVALID_VALUE_ID;
+  ASSERT_EQ(xnn_status_success,
+            xnn_define_tensor_value(subgraph, xnn_datatype_fp32, 0, nullptr,
+                                   nullptr, 1, XNN_VALUE_FLAG_EXTERNAL_OUTPUT,
+                                   &output_id));
+
+  ASSERT_EQ(xnn_status_success,
+            xnn_define_fully_connected(subgraph, -1e30f, 1e30f, input_id,
+                                       filter_id, XNN_INVALID_VALUE_ID,
+                                       output_id, 0));
+
+  xnn_runtime_t runtime = nullptr;
+  ASSERT_EQ(xnn_status_success, xnn_create_runtime(subgraph, &runtime));
+  ASSERT_NE(nullptr, runtime);
+
+  float in = 0.0f, out = 0.0f;
+  struct xnn_external_value ext[] = {{0, &in}, {1, &out}};
+  // xnn_setup_runtime (v1) calls xnn_reshape_runtime internally, which must
+  // reject num_dims=0 without OOB write.
+  xnn_status status = xnn_setup_runtime(runtime, 2, ext);
+#ifndef XNNPACK_USE_YNNPACK
+  ASSERT_NE(xnn_status_success, status);
+#else
+  // This is basically just the dot with shapes {} * {1, 1}, which according to
+  // our broadcasting rules, should work, and it does in YNNPACK.
+  ASSERT_EQ(xnn_status_success, status);
+#endif  // XNNPACK_USE_YNNPACK
+
+  xnn_delete_runtime(runtime);
+  xnn_delete_subgraph(subgraph);
+}
+
+// Regression test: fully-connected reshape must reject an input whose innermost
+// dimension does not match the filter input channels. The batch size is derived
+// as num_input_elements / input_channels, so a mismatched innermost dimension
+// decouples it from the input batch dimensions. The dynamically-quantized
+// parameter buffer is sized from the input batch dimensions, so the larger
+// batch size over-indexes it at invoke time, reading out of bounds.
+TEST(FullyConnectedQD8F32QC8W, reshape_rejects_input_channel_mismatch) {
+  ASSERT_EQ(xnn_status_success, xnn_initialize(nullptr));
+  const size_t output_channels = 4;
+  const size_t input_channels = 2;
+  SubgraphTester subgraph(3);
+  const uint32_t input_id = 0, filter_id = 1, output_id = 2;
+  subgraph.AddInputTensor(2, xnn_datatype_fp32, input_id);
+  uint32_t fc_input_id = input_id;
+  subgraph.AddInternalDynamicallyQuantizedTensor(
+      2, xnn_datatype_qdint8, /*num_nonbatch_dims=*/1, &fc_input_id);
+  subgraph.AddConvert(input_id, fc_input_id);
+
+  Tensor<int8_t> filter({output_channels, input_channels}, XnnExtraBytes);
+  filter.fill(0);
+  Tensor<float> filter_scale({output_channels});
+  filter_scale.fill(1.0f);
+  subgraph.AddStaticChannelwiseQuantizedTensor(
+      {output_channels, input_channels}, /*channel_dim=*/0,
+      xnn_datatype_qcint8, filter_scale.base(), filter_id, /*flags=*/0,
+      filter.base());
+
+  subgraph.AddOutputTensor(2, xnn_datatype_fp32, output_id)
+      .AddFullyConnected(-std::numeric_limits<float>::infinity(),
+                         std::numeric_limits<float>::infinity(), fc_input_id,
+                         filter_id, XNN_INVALID_VALUE_ID, output_id);
+  const xnn_status create_status = subgraph.CreateRuntime();
+  if (create_status == xnn_status_unsupported_hardware) {
+    GTEST_SKIP();
+  }
+  ASSERT_EQ(xnn_status_success, create_status);
+
+  // Innermost input dimension (8) is a multiple of input_channels (2) but does
+  // not equal it, so the old divisibility check passed this shape through.
+  Tensor<float> input({1, 8}, XnnExtraBytes);
+  input.fill(0.0f);
+  subgraph.ReshapeExternalTensor({1, 8}, input.base(), input_id)
+      .ReshapeRuntime();
+  ASSERT_NE(xnn_status_success, subgraph.Status());
 }
 
 }  // namespace xnnpack

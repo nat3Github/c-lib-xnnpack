@@ -4,6 +4,7 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <cassert>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
@@ -17,6 +18,7 @@
 #include "ynnpack/base/arch.h"  // IWYU pragma: keep
 #include "ynnpack/base/base.h"
 #include "ynnpack/base/bfloat16.h"
+#include "ynnpack/base/fp8.h"
 #include "ynnpack/base/half.h"
 #include "ynnpack/base/test/fuzz_test.h"
 #include "ynnpack/base/test/random.h"
@@ -42,6 +44,10 @@ std::string to_string(const std::pair<ynn_type, bool>& type) {
   }
   ss << to_string(type.first);
   return ss.str();
+}
+
+bool operator<(ynn_unary_operator lhs, ynn_unary_operator rhs) {
+  return static_cast<int>(lhs) < static_cast<int>(rhs);
 }
 
 namespace ynn {
@@ -85,9 +91,61 @@ struct KernelInfo {
   }
 };
 
+std::vector<unary_params> get_params_for_op(ynn_unary_operator op) {
+  // These parameters need to be chosen carefully so they do not invalidate the
+  // tolerances the op uses to check the results.
+  switch (op) {
+    case ynn_unary_exp:
+      return {
+          unary_params{.exp = exp_params{0.0f, 1.0f, 1.0f}},
+          unary_params{.exp = exp_params{0.1f, 1.1f, 1.2f}},
+      };
+    case ynn_unary_erf:
+      return {
+          unary_params{.erf = erf_params{0.0f, 1.0f, 1.0f}},
+          unary_params{.erf = erf_params{2.0f, 1.1f, 1.2f}},
+      };
+    case ynn_unary_approx_erf:
+      return {
+          unary_params{.approx_erf = approx_erf_params{0.0f, 1.0f, 1.0f}},
+          unary_params{.approx_erf = approx_erf_params{2.0f, 1.1f, 1.2f}},
+      };
+    case ynn_unary_approx_tanh:
+      return {
+          unary_params{.approx_tanh = approx_tanh_params{0.0f, 1.0f}},
+          unary_params{.approx_tanh = approx_tanh_params{2.0f, 1.1f}},
+      };
+    case ynn_unary_tanh:
+      return {
+          unary_params{.tanh = tanh_params{0.0f, 1.0f}},
+          unary_params{.tanh = tanh_params{2.0f, 1.1f}},
+      };
+    case ynn_unary_sin:
+      return {
+          unary_params{.sin = sin_params{0.0f, 1.0f}},
+          unary_params{.sin = sin_params{2.0f, 0.5f}},
+      };
+    case ynn_unary_cos:
+      return {
+          unary_params{.cos = cos_params{0.0f, 1.0f}},
+          unary_params{.cos = cos_params{2.0f, 0.5f}},
+      };
+    case ynn_unary_poly3:
+      return {
+          unary_params{.poly3 = poly3_params{1.0f, 0.0f, 0.0f, 0.0f}},
+          unary_params{.poly3 = poly3_params{1.0f, 1.0f, 0.0f, 0.0f}},
+          unary_params{.poly3 = poly3_params{1.0f, 1.0f, 1.0f, 0.0f}},
+          unary_params{.poly3 = poly3_params{1.0f, 1.0f, 1.0f, 1.0f}},
+          unary_params{.poly3 = poly3_params{0.5f, 0.2f, 0.1f, 0.1f}},
+      };
+    default:
+      return {get_unary_params(op)};
+  }
+}
+
 template <typename A, typename X, typename OpInfo>
 void TestImpl(A, X, const KernelInfo& kernel_info, const OpInfo& op_info,
-              const Shape& shape) {
+              const Shape& shape, const unary_params& params = {}) {
   if (!is_arch_supported(kernel_info.arch_flags)) {
     GTEST_SKIP() << "Unsupported hardware";
   }
@@ -104,8 +162,8 @@ void TestImpl(A, X, const KernelInfo& kernel_info, const OpInfo& op_info,
   a = a.crop_padding({0, 0}, {0, shape.padding_a});
   x = x.crop_padding({0, 0}, {0, shape.padding_x});
 
-  kernel(shape.m, shape.n, a.stride(0) * sizeof(A), a.base(),
-         x.stride(0) * sizeof(X), x.base());
+  kernel(shape.m, shape.n, a.stride_bytes(0), a.base(), x.stride_bytes(0),
+         x.base(), &params);
 
   check_results(op_info, a, x);
 }
@@ -123,8 +181,16 @@ constexpr decltype(auto) SwitchType(ynn_type type, F&& f) {
       return std::forward<F>(f)(half());
     case ynn_type_bf16:
       return std::forward<F>(f)(bfloat16());
+    case ynn_type_fp8_e5m2:
+      return std::forward<F>(f)(fp8_e5m2());
+    case ynn_type_fp8_e4m3:
+      return std::forward<F>(f)(fp8_e4m3());
     case ynn_type_fp32:
       return std::forward<F>(f)(float());
+    case ynn_type_int4:
+      return std::forward<F>(f)(int4x2());
+    case ynn_type_int2:
+      return std::forward<F>(f)(int2x4());
     default:
       YNN_UNREACHABLE;
   }
@@ -137,10 +203,12 @@ TEST_P(Reference, op) {
   ynn_type type = std::get<0>(GetParam());
   ynn_unary_operator op = std::get<1>(GetParam());
   const Shape& shape = std::get<2>(GetParam());
-  const unary_op_info& op_info = *get_unary_op_info(op);
   KernelInfo kernel_info(op, type);
   SwitchType(type, [&](auto type) {
-    TestImpl(type, type, kernel_info, op_info, shape);
+    for (const auto& params : get_params_for_op(op)) {
+      auto op_info = get_unary_op_info(op, params);
+      TestImpl(type, type, kernel_info, *op_info, shape, params);
+    }
   });
 }
 
@@ -159,12 +227,27 @@ TEST_P(ReferenceConvert, op) {
 }
 
 // clang-format off
-ynn_type all_convert_types[] = {
+ynn_type all_convert_input_types[] = {
+    ynn_type_int2,
+    ynn_type_int4,
     ynn_type_int8,
     ynn_type_uint8,
     ynn_type_int32,
     ynn_type_fp16,
     ynn_type_bf16,
+    ynn_type_fp8_e5m2,
+    ynn_type_fp8_e4m3,
+    ynn_type_fp32,
+};
+
+ynn_type all_convert_output_types[] = {
+    ynn_type_int8,
+    ynn_type_uint8,
+    ynn_type_int32,
+    ynn_type_fp16,
+    ynn_type_bf16,
+    ynn_type_fp8_e5m2,
+    ynn_type_fp8_e4m3,
     ynn_type_fp32,
 };
 
@@ -175,20 +258,24 @@ const ynn_unary_operator all_real_ops[] = {
     ynn_unary_round,
     ynn_unary_negate,
     ynn_unary_square,
-    ynn_unary_square_root,
-    ynn_unary_cube_root,
-    ynn_unary_reciprocal_square_root,
+    ynn_unary_sqrt,
+    ynn_unary_cbrt,
+    ynn_unary_rsqrt,
     ynn_unary_log,
     ynn_unary_log1p,
     ynn_unary_exp,
     ynn_unary_expm1,
     ynn_unary_erf,
+    ynn_unary_approx_erf,
+    ynn_unary_approx_tanh,
     ynn_unary_tanh,
     ynn_unary_sign,
-    ynn_unary_sine,
-    ynn_unary_cosine,
+    ynn_unary_sin,
+    ynn_unary_cos,
+    ynn_unary_tan,
     ynn_unary_sigmoid,
     ynn_unary_hardswish,
+    ynn_unary_round_to_bf16,
 };
 
 const ynn_unary_operator all_integer_ops[] = {
@@ -204,9 +291,8 @@ const ynn_unary_operator all_integer_ops[] = {
 const size_t padding = 16;
 
 const Shape reference_shapes[] = {
-    {256, 4, 0, 0},
-    {256, 4, padding, 0},
-    {256, 4, 0, padding},
+    {256, 4, 0, 0}, {256, 4, padding, 0}, {256, 4, 0, padding},
+    {256, 3, 1, 0}, {256, 5, 3, 0},
 };
 
 INSTANTIATE_TEST_SUITE_P(RealOps, Reference,
@@ -220,8 +306,8 @@ INSTANTIATE_TEST_SUITE_P(IntegerOps, Reference,
                          test_param_to_string<Reference::ParamType>);
 
 INSTANTIATE_TEST_SUITE_P(Convert, ReferenceConvert,
-                         Combine(ValuesIn(all_convert_types),
-                                 ValuesIn(all_convert_types),
+                         Combine(ValuesIn(all_convert_input_types),
+                                 ValuesIn(all_convert_output_types),
                                  ValuesIn(reference_shapes)),
                          test_param_to_string<ReferenceConvert::ParamType>);
 
@@ -242,14 +328,35 @@ const std::vector<Shape> all_shapes = []() {
   return shapes;
 }();
 
-#define YNN_ELEMENTWISE_KERNEL(arch_flags, kernel, op, type_a, type_x) \
-  class kernel##_test : public testing::TestWithParam<Shape> {};       \
-  TEST_P(kernel##_test, no_broadcast) {                                \
-    KernelInfo kernel_info(arch_flags, kernel);                        \
-    TestImpl(type_a{}, type_x{}, kernel_info, op{}, GetParam());       \
-  }                                                                    \
-  INSTANTIATE_TEST_SUITE_P(test, kernel##_test, ValuesIn(all_shapes),  \
-                           [](const auto& i) { return to_string(i.param); });
+template <typename T>
+std::vector<Shape> get_test_shapes() {
+  if constexpr (type_info<T>::element_count() == 1) {
+    return all_shapes;
+  } else {
+    std::vector<Shape> result;
+    for (const auto& s : all_shapes) {
+      if (s.n % type_info<T>::element_count() == 0 &&
+          s.padding_a % type_info<T>::element_count() == 0 &&
+          s.padding_x % type_info<T>::element_count() == 0) {
+        result.push_back(s);
+      }
+    }
+    return result;
+  }
+}
+
+#define YNN_ELEMENTWISE_KERNEL(arch_flags, kernel, op, flags, type_a, type_x) \
+  class kernel##_test : public testing::TestWithParam<ynn::Shape> {};         \
+  TEST_P(kernel##_test, no_broadcast) {                                       \
+    ynn::KernelInfo kernel_info(arch_flags, kernel);                          \
+    for (const auto& params : ynn::get_params_for_op(ynn_unary_##op)) {       \
+      ynn::TestImpl(type_a{}, type_x{}, kernel_info, ynn::op(params),         \
+                    GetParam(), params);                                      \
+    }                                                                         \
+  }                                                                           \
+  INSTANTIATE_TEST_SUITE_P(                                                   \
+      test, kernel##_test, ValuesIn(ynn::get_test_shapes<type_a>()),          \
+      [](const auto& i) { return ynn::to_string(i.param); });
 #include "ynnpack/kernels/unary/kernels.inc"
 #undef YNN_ELEMENTWISE_KERNEL
 

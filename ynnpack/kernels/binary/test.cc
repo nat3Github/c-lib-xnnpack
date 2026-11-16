@@ -94,9 +94,9 @@ void TestImpl(const KernelInfo& kernel_info, const OpInfo& op_info, size_t m,
   broadcast_extent_1(a);
   broadcast_extent_1(b);
 
-  kernel(m, n, a.stride(0) * sizeof(A), a.stride(1) * sizeof(A), a.base(),
-         b.stride(0) * sizeof(B), b.stride(1) * sizeof(B), b.base(),
-         x.stride(0) * sizeof(X), x.base());
+  kernel(m, n, a.stride_bytes(0), a.stride_bytes(1), a.base(),
+         b.stride_bytes(0), b.stride_bytes(1), b.base(), x.stride_bytes(0),
+         x.base(), nullptr);
 
   check_results(op_info, a, b, x);
 }
@@ -232,21 +232,22 @@ const std::vector<Shape> all_shapes = []() {
   return shapes;
 }();
 
-#define YNN_ELEMENTWISE_KERNEL(arch_flags, kernel, op, type_a, type_b, type_x) \
-  class kernel##_test : public testing::TestWithParam<Shape> {};               \
-  TEST_P(kernel##_test, no_broadcast) {                                        \
-    KernelInfo kernel_info(arch_flags, kernel);                                \
-    TestOp<type_a, type_b, type_x>(kernel_info, op{}, GetParam());             \
-  }                                                                            \
-  TEST_P(kernel##_test, op_broadcast_a) {                                      \
-    KernelInfo kernel_info(arch_flags, kernel);                                \
-    TestOpBroadcastA<type_a, type_b, type_x>(kernel_info, op{}, GetParam());   \
-  }                                                                            \
-  TEST_P(kernel##_test, op_broadcast_b) {                                      \
-    KernelInfo kernel_info(arch_flags, kernel);                                \
-    TestOpBroadcastB<type_a, type_b, type_x>(kernel_info, op{}, GetParam());   \
-  }                                                                            \
-  INSTANTIATE_TEST_SUITE_P(test, kernel##_test, ValuesIn(all_shapes),          \
+#define YNN_ELEMENTWISE_KERNEL(arch_flags, kernel, op, flags, type_a, type_b, \
+                               type_x)                                        \
+  class kernel##_test : public testing::TestWithParam<Shape> {};              \
+  TEST_P(kernel##_test, no_broadcast) {                                       \
+    KernelInfo kernel_info(arch_flags, kernel);                               \
+    TestOp<type_a, type_b, type_x>(kernel_info, op{}, GetParam());            \
+  }                                                                           \
+  TEST_P(kernel##_test, op_broadcast_a) {                                     \
+    KernelInfo kernel_info(arch_flags, kernel);                               \
+    TestOpBroadcastA<type_a, type_b, type_x>(kernel_info, op{}, GetParam());  \
+  }                                                                           \
+  TEST_P(kernel##_test, op_broadcast_b) {                                     \
+    KernelInfo kernel_info(arch_flags, kernel);                               \
+    TestOpBroadcastB<type_a, type_b, type_x>(kernel_info, op{}, GetParam());  \
+  }                                                                           \
+  INSTANTIATE_TEST_SUITE_P(test, kernel##_test, ValuesIn(all_shapes),         \
                            [](const auto& i) { return to_string(i.param); });
 #include "ynnpack/kernels/binary/kernels.inc"
 #undef YNN_ELEMENTWISE_KERNEL

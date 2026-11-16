@@ -147,6 +147,24 @@ struct xnn_hardware_config {
 
 XNN_INTERNAL const struct xnn_hardware_config* xnn_init_hardware_config();
 
+// Manually sets the hardware configuration.
+//
+// Warning: Using this for anything other than testing is unsupported.
+//
+// Warning: XNNPack runtime objects rely on the hardware config being stable
+// throughout their lifetime. Don't call this function if you cannot ensure that
+// all existing runtimes have already been destroyed.
+XNN_INTERNAL void xnn_set_hardware_config(const struct xnn_hardware_config* config);
+
+// Resets the hardware configuration to the auto-detected one.
+//
+// Warning: Using this for anything other than testing is unsupported.
+//
+// Warning: XNNPack runtime objects rely on the hardware config being stable
+// throughout their lifetime. Don't call this function if you cannot ensure that
+// all existing runtimes have already been destroyed.
+XNN_INTERNAL void xnn_reset_hardware_config(void);
+
 static inline bool xnn_is_bf16_compatible_config(
     const struct xnn_hardware_config* hardware_config) {
 #if XNN_ARCH_X86_64
@@ -158,14 +176,12 @@ static inline bool xnn_is_bf16_compatible_config(
 
 static inline bool xnn_is_f16_compatible_config(
     const struct xnn_hardware_config* hardware_config) {
-#if (XNN_ARCH_ARM && XNN_ENABLE_ARM_FP16_VECTOR && \
-     XNN_ENABLE_ARM_FP16_SCALAR) ||                \
-    (XNN_ARCH_ARM64 && XNN_ENABLE_ARM_FP16_VECTOR)
-  return (hardware_config->arch_flags & xnn_arch_arm_neon_fp16_arith);
-#elif XNN_ENABLE_AVX && (XNN_ARCH_X86 || XNN_ARCH_X86_64)
+#if (XNN_ARCH_ARM || XNN_ARCH_ARM64) && XNN_ENABLE_ARM_FP16_VECTOR
+  return hardware_config->arch_flags & xnn_arch_arm_neon_fp16_arith;
+#elif (XNN_ARCH_X86 || XNN_ARCH_X86_64) && XNN_ENABLE_AVX
   return (hardware_config->arch_flags & xnn_arch_x86_f16c) && (hardware_config->arch_flags & xnn_arch_x86_avx);
 #elif (XNN_ARCH_RISCV && XNN_ENABLE_RISCV_FP16_VECTOR)
-  return (hardware_config->arch_flags & xnn_arch_riscv_vector_fp16_arith);
+  return hardware_config->arch_flags & xnn_arch_riscv_vector_fp16_arith;
 #else
   return false;
 #endif

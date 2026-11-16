@@ -68,17 +68,7 @@ typedef void (*xnn_f32_qc8w_gemm_ukernel_fn)(
     const void* w, float* c, size_t cm_stride, size_t cn_stride,
     const struct xnn_f32_default_params* params);
 
-// GEMM: GEneral Matrix Multiplication with ReLU activation
 
-typedef void (*xnn_f32_gemm_relu_ukernel_fn)(
-    size_t mr, size_t nr, size_t k, const float* a, size_t a_stride,
-    const float* w, float* c, size_t cm_stride, size_t cn_stride,
-    const struct xnn_f32_relu_params* params);
-
-typedef void (*xnn_f32_qc8w_gemm_relu_ukernel_fn)(
-    size_t mr, size_t nr, size_t k, const float* a, size_t a_stride,
-    const void* w, float* c, size_t cm_stride, size_t cn_stride,
-    const struct xnn_f32_relu_params* params);
 
 // GEMM: GEneral Matrix Multiplication with Min+Max activation
 
@@ -141,6 +131,12 @@ typedef void (*xnn_qd8_f16_qb4w_gemm_ukernel_fn)(
     const struct xnn_f16_qb4w_minmax_params* params,
     const struct xnn_qd8_quantization_params* quantization_params);
 
+typedef void (*xnn_qd8_bf16_qb4w_gemm_ukernel_fn)(
+    size_t mr, size_t nr, size_t k, const int8_t* a, size_t a_stride,
+    const void* w, xnn_bfloat16* c, size_t cm_stride, size_t cn_stride,
+    const struct xnn_bf16_qb4w_minmax_params* params,
+    const struct xnn_qd8_quantization_params* quantization_params);
+
 typedef void (*xnn_qd8_f32_qc2w_gemm_ukernel_fn)(
     size_t mr, size_t nr, size_t k, const int8_t* a, size_t a_stride,
     const void* w, float* c, size_t cm_stride, size_t cn_stride,
@@ -190,7 +186,7 @@ typedef void (*xnn_qu8_gemm_minmax_ukernel_fn)(
 typedef void (*xnn_qp8_f32_qc4w_gemm_minmax_ukernel_fn)(
     size_t m, size_t n, size_t k, const void* lhs_packed,
     const void* rhs_packed, float* dst, size_t dst_stride_row,
-    size_t dst_stride_col, struct xnn_f32_minmax_params* minmax_params);
+    size_t dst_stride_col, struct xnn_f32_qc4w_minmax_params* minmax_params);
 
 typedef void (*xnn_qp8_f32_qc8w_gemm_minmax_ukernel_fn)(
     size_t m, size_t n, size_t k, const void* lhs_packed,
@@ -280,12 +276,7 @@ typedef void (*xnn_pf32_igemm_ukernel_fn)(
     float* c, size_t cm_stride, size_t cn_stride, size_t a_offset,
     const float* zero, const struct xnn_f32_default_params* params);
 
-// IGEMM: Indirect GEMM with ReLU activation
 
-typedef void (*xnn_f32_igemm_relu_ukernel_fn)(
-    size_t mr, size_t nr, size_t kc, size_t ks, const float** a, const float* w,
-    float* c, size_t cm_stride, size_t cn_stride, size_t a_offset,
-    const float* zero, const struct xnn_f32_relu_params* params);
 
 // IGEMM: Indirect GEMM with Min+Max activation
 
@@ -680,6 +671,11 @@ typedef void (*xnn_x16_x32_packw_gemm_gio_ukernel_fn)(
     size_t k_stride, const uint16_t* k, const uint32_t* b, const void* scale,
     uint16_t* packed_weights, size_t extra_bytes, const void* params);
 
+typedef void (*xnn_x16_packw_gemm_gio_ukernel_fn)(
+    size_t g, size_t nc, size_t kc, size_t nr, size_t kr, size_t sr,
+    size_t k_stride, const uint16_t* k, const uint16_t* b, const void* scale,
+    uint16_t* packed_weights, size_t extra_bytes, const void* params);
+
 typedef void (*xnn_x32_packw_gemm_goi_ukernel_fn)(
     size_t g, size_t nc, size_t kc, size_t nr, size_t kr, size_t sr,
     const uint32_t* k, const uint32_t* b, const void* scale,
@@ -784,6 +780,10 @@ typedef void (*xnn_pad_ukernel_fn)(size_t rows, size_t channels,
 
 typedef void (*xnn_reduce_ukernel_fn)(size_t batch, const void* input,
                                       void* output, const void* params);
+
+typedef void (*xnn_bf16_reduce_ukernel_fn)(
+    size_t batch, const xnn_bfloat16* input, xnn_bfloat16* output,
+    const struct xnn_bf16_default_params* params);
 
 typedef void (*xnn_f16_reduce_ukernel_fn)(
     size_t batch, const xnn_float16* input, xnn_float16* output,
@@ -1250,6 +1250,10 @@ typedef size_t (*xnn_init_f32_qc4w_minmax_params_fn)(
 
 typedef size_t (*xnn_init_f32_qb4w_minmax_params_fn)(
     struct xnn_f32_qb4w_minmax_params* params, float min, float max,
+    uint8_t kernel_zero_point, size_t blocksize);
+
+typedef size_t (*xnn_init_bf16_qb4w_minmax_params_fn)(
+    struct xnn_bf16_qb4w_minmax_params* params, float min, float max,
     uint8_t kernel_zero_point, size_t blocksize);
 
 typedef size_t (*xnn_init_s8_minmax_params_fn)(

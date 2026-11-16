@@ -45,6 +45,14 @@
 
 #define XNN_LOG_STDERR STD_ERROR_HANDLE
 #define XNN_LOG_STDOUT STD_OUTPUT_HANDLE
+#elif defined(__ZEPHYR__)
+// The Zephyr branch writes a trailing '\n' followed by a '\0' (the buffer is
+// passed to printf, which needs a NUL terminator), i.e. two trailing bytes,
+// so reserve two like the _WIN32 path.
+#define XNN_LOG_NEWLINE_LENGTH 2
+
+#define XNN_LOG_STDERR 0
+#define XNN_LOG_STDOUT 0
 #elif defined(__hexagon__)
 #define XNN_LOG_NEWLINE_LENGTH 1
 
@@ -113,6 +121,10 @@ static void xnn_vlog(int output_handle, const char* prefix,
       GetStdHandle((DWORD)output_handle), out_buffer,
       (prefix_length + format_length + XNN_LOG_NEWLINE_LENGTH) * sizeof(char),
       &bytes_written, NULL);
+#elif defined(__ZEPHYR__)
+  out_buffer[prefix_length + format_length] = '\n';
+  out_buffer[prefix_length + format_length + 1] = '\0';
+  printf("%s", out_buffer);
 #else
   out_buffer[prefix_length + format_length] = '\n';
 

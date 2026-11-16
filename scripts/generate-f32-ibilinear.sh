@@ -9,7 +9,7 @@ tools/xngen src/f32-ibilinear/scalar.c.in -D CHANNEL_TILE=1 -D PIXEL_TILE=1 -o s
 tools/xngen src/f32-ibilinear/scalar.c.in -D CHANNEL_TILE=2 -D PIXEL_TILE=1 -o src/f32-ibilinear/gen/f32-ibilinear-scalar-u2.c &
 tools/xngen src/f32-ibilinear/scalar.c.in -D CHANNEL_TILE=4 -D PIXEL_TILE=1 -o src/f32-ibilinear/gen/f32-ibilinear-scalar-u4.c &
 
-################################## WAsm SIMD ##################################
+################################## Wasm SIMD ##################################
 tools/xngen src/f32-ibilinear/wasmsimd.c.in -D CHANNEL_TILE=4 -D PIXEL_TILE=1 -D FMA=0 -o src/f32-ibilinear/gen/f32-ibilinear-wasmsimd-u4.c &
 tools/xngen src/f32-ibilinear/wasmsimd.c.in -D CHANNEL_TILE=8 -D PIXEL_TILE=1 -D FMA=0 -o src/f32-ibilinear/gen/f32-ibilinear-wasmsimd-u8.c &
 
@@ -26,5 +26,10 @@ tools/xngen src/f32-ibilinear/neon.c.in -D CHANNEL_TILE=8 -D PIXEL_TILE=1 -D FMA
 ################################### x86 SSE ###################################
 tools/xngen src/f32-ibilinear/sse.c.in -D CHANNEL_TILE=4 -D PIXEL_TILE=1 -o src/f32-ibilinear/gen/f32-ibilinear-sse-u4.c &
 tools/xngen src/f32-ibilinear/sse.c.in -D CHANNEL_TILE=8 -D PIXEL_TILE=1 -o src/f32-ibilinear/gen/f32-ibilinear-sse-u8.c &
+
+################################## RISC-V RVV #################################
+tools/xngen src/f32-ibilinear/rvv.c.in -D LMUL=1 -o src/f32-ibilinear/gen/f32-ibilinear-rvv-u1v.c &
+tools/xngen src/f32-ibilinear/rvv.c.in -D LMUL=2 -o src/f32-ibilinear/gen/f32-ibilinear-rvv-u2v.c &
+tools/xngen src/f32-ibilinear/rvv.c.in -D LMUL=4 -o src/f32-ibilinear/gen/f32-ibilinear-rvv-u4v.c &
 
 wait

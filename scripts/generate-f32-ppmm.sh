@@ -10,7 +10,7 @@ tools/xngen src/f32-ppmm/scalar.c.in -D MR=2 -D NR=4 -o src/f32-ppmm/gen/f32-ppm
 tools/xngen src/f32-ppmm/scalar.c.in -D MR=4 -D NR=2 -o src/f32-ppmm/gen/f32-ppmm-4x2-minmax-scalar.c &
 tools/xngen src/f32-ppmm/scalar.c.in -D MR=3 -D NR=3 -o src/f32-ppmm/gen/f32-ppmm-3x3-minmax-scalar.c &
 
-################################## WAsm SIMD ##################################
+################################## Wasm SIMD ##################################
 tools/xngen src/f32-ppmm/wasmsimd-splat.c.in -D MR=4 -D NR=8 -D MINMAX=MINMAX  -o src/f32-ppmm/gen/f32-ppmm-4x8-minmax-wasmsimd-arm-splat.c &
 tools/xngen src/f32-ppmm/wasmsimd-splat.c.in -D MR=4 -D NR=8 -D MINMAX=PMINMAX -o src/f32-ppmm/gen/f32-ppmm-4x8-minmax-wasmsimd-x86-splat.c &
 
@@ -42,5 +42,16 @@ tools/xngen src/f32-ppmm/8x8-aarch64-neonfma-cortex-a75.S.in -D PREFETCH=1 -o sr
 
 ################################### x86 SSE ###################################
 tools/xngen src/f32-ppmm/sse.c.in -D MR=4 -D NR=8 -o src/f32-ppmm/gen/f32-ppmm-4x8-minmax-sse.c &
+
+################################## RISC-V RVV #################################
+tools/xngen src/f32-ppmm/rvv.c.in -D MR=1 -D NR=m1 -o src/f32-ppmm/gen/f32-ppmm-1x1v-minmax-rvv.c &
+tools/xngen src/f32-ppmm/rvv.c.in -D MR=1 -D NR=m2 -o src/f32-ppmm/gen/f32-ppmm-1x2v-minmax-rvv.c &
+tools/xngen src/f32-ppmm/rvv.c.in -D MR=1 -D NR=m4 -o src/f32-ppmm/gen/f32-ppmm-1x4v-minmax-rvv.c &
+tools/xngen src/f32-ppmm/rvv.c.in -D MR=2 -D NR=m1 -o src/f32-ppmm/gen/f32-ppmm-2x1v-minmax-rvv.c &
+tools/xngen src/f32-ppmm/rvv.c.in -D MR=2 -D NR=m2 -o src/f32-ppmm/gen/f32-ppmm-2x2v-minmax-rvv.c &
+tools/xngen src/f32-ppmm/rvv.c.in -D MR=2 -D NR=m4 -o src/f32-ppmm/gen/f32-ppmm-2x4v-minmax-rvv.c &
+tools/xngen src/f32-ppmm/rvv.c.in -D MR=4 -D NR=m1 -o src/f32-ppmm/gen/f32-ppmm-4x1v-minmax-rvv.c &
+tools/xngen src/f32-ppmm/rvv.c.in -D MR=4 -D NR=m2 -o src/f32-ppmm/gen/f32-ppmm-4x2v-minmax-rvv.c &
+tools/xngen src/f32-ppmm/rvv.c.in -D MR=4 -D NR=m4 -o src/f32-ppmm/gen/f32-ppmm-4x4v-minmax-rvv.c &
 
 wait

@@ -250,6 +250,10 @@ class SubgraphTester {
       const float* scale, uint32_t external_id, uint32_t flags = 0,
       void* data = nullptr);
 
+  SubgraphTester& AddDynamicChannelwiseQuantizedTensor(
+      const TensorShape& shape, size_t channel_dim, xnn_datatype datatype,
+      const float* scale, uint32_t external_id, void* data = nullptr);
+
   SubgraphTester& AddStaticTensorQS8(const TensorShape& shape,
                                      size_t channel_dim, TensorType tensor_type,
                                      const float* scale, uint32_t external_id,
@@ -359,11 +363,6 @@ class SubgraphTester {
                                      uint32_t external_id);
 
   SubgraphTester& AddConcatenate(size_t axis, std::vector<uint32_t> input_ids,
-                                 uint32_t output_id);
-
-  SubgraphTester& AddConstantPad(const size_t* pre_paddings,
-                                 const size_t* post_paddings,
-                                 float padding_value, uint32_t input_id,
                                  uint32_t output_id);
 
   SubgraphTester& AddConstantPad(const std::vector<size_t>& pre_paddings,

@@ -24,6 +24,11 @@ namespace ynn {
 using simd::u8x4;
 using simd::u8x8;
 
+void transpose_x2(size_t m, size_t n, size_t n_bytes_a, size_t stride_a,
+                       const void* a, size_t stride_x, void* x) {
+  transpose<std::array<u8x4, 16>>(m, n, n_bytes_a, stride_a, a, stride_x, x,
+                                   std::integral_constant<size_t, 2>{});
+}
 void transpose_x4(size_t m, size_t n, size_t n_bytes_a, size_t stride_a,
                        const void* a, size_t stride_x, void* x) {
   transpose<std::array<u8x4, 8>>(m, n, n_bytes_a, stride_a, a, stride_x, x,
@@ -59,6 +64,7 @@ transpose_kernel_fn get_transpose_kernel(size_t element_size_bits) {
 #define YNN_TRANSPOSE_KERNEL(arch_flags, name, kernel_element_size_bits) \
   if (kernel_element_size_bits == element_size_bits) {                   \
     if (is_arch_supported(arch_flags)) {                                 \
+      YNN_LOG_DEBUG() << "Using transpose kernel " << #name;             \
       return name;                                                       \
     }                                                                    \
   }

@@ -65,7 +65,7 @@ Tensor<float> ReferenceImpl(Tensor<Data> input, Tensor<Filter> filter,
               float padded_nyxc =
                   dequantize(padded(n, y, dy, x, dx, ic), input_quantization);
               float filter_yxc =
-                  dequantize(filter(dy, dx, c), filter_quantization);
+                  dequantize(filter(0, dy, dx, c), filter_quantization);
               output_nyxc += padded_nyxc * filter_yxc;
             }
           }
@@ -167,6 +167,7 @@ void TestImpl(bool channelwise_quantization = false) {
 
     // Make a random filter.
     std::vector<size_t> filter_shape = {
+        1,
         params.kernel.height,
         params.kernel.width,
         params.input_channels * params.depth_multiplier,
@@ -195,7 +196,7 @@ void TestImpl(bool channelwise_quantization = false) {
     xnn_quantization_params filter_quantization =
         random_quantization(xnn_datatype_of<Filter>(), rng, 0.001f, 2.0f);
     Tensor<float> filter_scale(
-        {channelwise_quantization ? filter.extent(2) : 1});
+        {channelwise_quantization ? filter.extent(3) : 1});
     if (filter_scale.size() > 1) {
       // Generate random per-channel scales, in the range of the original scale.
       std::uniform_real_distribution<float> filter_scale_dist(
@@ -235,7 +236,7 @@ void TestImpl(bool channelwise_quantization = false) {
                             input_id);
     if (channelwise_quantization) {
       subgraph.AddStaticTensorQS8(
-          filter.extents(), /*channel_dim=*/2, TensorType::kDense,
+          filter.extents(), /*channel_dim=*/3, TensorType::kDense,
           filter_scale.data(), filter_id,
           /*flags=*/0, reinterpret_cast<int8_t*>(filter.base()));
     } else {
@@ -321,7 +322,8 @@ void TestImpl(bool channelwise_quantization = false) {
           ASSERT_NEAR(static_cast<float>(output(i)), expected(i), tolerance)
               << "input_shape=" << index_to_string(input_shape)
               << ", output_shape=" << index_to_string(output_shape)
-              << ", kh=" << kh << ", kw=" << kw;
+              << ", kh=" << kh << ", kw=" << kw
+              << ", bias_empty=" << bias.empty();
         }
       }
     }
@@ -337,7 +339,56 @@ TEST(DepthwiseConvolution2DQC8, test) {
 }
 TEST(DepthwiseConvolution2DQU8, test) { TestImpl<quint8, quint8, qint32>(); }
 TEST(DepthwiseConvolution2DQS8, test) { TestImpl<qint8, qint8, qint32>(); }
-TEST(DepthwiseConvolution2DF16, test) { TestImpl<xnn_float16, float, float>(); }
+TEST(DepthwiseConvolution2DF16, test) {
+  TestImpl<xnn_float16, xnn_float16, xnn_float16>();
+}
+TEST(DepthwiseConvolution2DF16F16F32, test) {
+  TestImpl<xnn_float16, xnn_float16, float>();
+}
+TEST(DepthwiseConvolution2DF16F32, test) {
+  TestImpl<xnn_float16, float, float>();
+}
 TEST(DepthwiseConvolution2DF32, test) { TestImpl<float, float, float>(); }
+
+TEST(DepthwiseConvolution2D, reshape_rejects_input_channel_mismatch) {
+  ASSERT_EQ(xnn_status_success, xnn_initialize(nullptr /* allocator */));
+
+  DepthwiseConvolutionParams params;
+  params.padding = {0, 0, 0, 0};
+  params.kernel = {3, 3};
+  params.subsampling = {1, 1};
+  params.dilation = {1, 1};
+  params.depth_multiplier = 1;
+  params.input_channels = 4;
+
+  const uint32_t input_id = 0;
+  const uint32_t filter_id = 1;
+  const uint32_t bias_id = 2;
+  const uint32_t output_id = 3;
+
+  Tensor<float> filter(std::vector<size_t>{1, 3, 3, 4});
+  filter.fill(0.0f);
+  Tensor<float> bias(std::vector<size_t>{4});
+  bias.fill(0.0f);
+
+  SubgraphTester subgraph(4);
+  subgraph.AddInputTensor(4, xnn_datatype_fp32, input_id)
+      .AddStaticTensor(filter.extents(), filter_id, filter.base())
+      .AddStaticTensor(bias.extents(), bias_id, bias.base())
+      .AddOutputTensor(4, xnn_datatype_fp32, output_id)
+      .AddDepthwiseConvolution2D(params, input_id, filter_id, bias_id,
+                                 output_id);
+  if (subgraph.CreateRuntime() == xnn_status_unsupported_hardware) {
+    GTEST_SKIP();
+  }
+
+  // The operator was created for input_channels == 4. A single-channel runtime
+  // input must be rejected before the indirection buffer strides past the end
+  // of the smaller input.
+  std::vector<float> input(1 * 8 * 8 * 1);
+  subgraph.ReshapeExternalTensor({1, 8, 8, 1}, input.data(), input_id)
+      .ReshapeRuntime();
+  EXPECT_EQ(subgraph.Status(), xnn_status_invalid_parameter);
+}
 
 }  // namespace xnnpack

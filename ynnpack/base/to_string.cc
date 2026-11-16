@@ -20,6 +20,8 @@ const char* to_string(enum ynn_unary_operator op) {
       return "ceil";
     case ynn_unary_convert:
       return "convert";
+    case ynn_unary_requantize_to_uint8:
+      return "requantize_to_uint8";
     case ynn_unary_exp:
       return "exp";
     case ynn_unary_expm1:
@@ -34,26 +36,36 @@ const char* to_string(enum ynn_unary_operator op) {
       return "log1p";
     case ynn_unary_negate:
       return "negate";
-    case ynn_unary_reciprocal_square_root:
-      return "reciprocal_square_root";
+    case ynn_unary_rsqrt:
+      return "rsqrt";
     case ynn_unary_square:
       return "square";
-    case ynn_unary_square_root:
-      return "square_root";
+    case ynn_unary_sqrt:
+      return "sqrt";
     case ynn_unary_tanh:
       return "tanh";
-    case ynn_unary_cube_root:
-      return "cube_root";
+    case ynn_unary_cbrt:
+      return "cbrt";
     case ynn_unary_sign:
       return "sign";
-    case ynn_unary_sine:
-      return "sine";
-    case ynn_unary_cosine:
-      return "cosine";
+    case ynn_unary_sin:
+      return "sin";
+    case ynn_unary_cos:
+      return "cos";
     case ynn_unary_sigmoid:
       return "sigmoid";
     case ynn_unary_hardswish:
       return "hardswish";
+    case ynn_unary_poly3:
+      return "poly3";
+    case ynn_unary_round_to_bf16:
+      return "round_to_bf16";
+    case ynn_unary_approx_erf:
+      return "approx_erf";
+    case ynn_unary_approx_tanh:
+      return "approx_tanh";
+    case ynn_unary_tan:
+      return "tan";
     case ynn_unary_invalid:
       return "invalid";
   }

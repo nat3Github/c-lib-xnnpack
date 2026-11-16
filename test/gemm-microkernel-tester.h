@@ -193,13 +193,6 @@ class GemmMicrokernelTester {
 
   bool known_nc_mod_nr() const { return known_nc_mod_nr_; }
 
-  GemmMicrokernelTester& relu(bool relu) {
-    this->relu_ = relu;
-    return *this;
-  }
-
-  bool relu() const { return relu_; }
-
   GemmMicrokernelTester& mr_packed(size_t mr_packed) {
     this->mr_packed_ = mr_packed;
     return *this;
@@ -266,6 +259,10 @@ class GemmMicrokernelTester {
             xnn_init_f16_qb4w_minmax_params_fn init_params,
             xnn_pack_qs8_qb4w_gemm_fn pack) const;
 
+  void Test(xnn_qd8_bf16_qb4w_gemm_ukernel_fn gemm,
+            xnn_init_bf16_qb4w_minmax_params_fn init_params,
+            xnn_pack_qs8_qb4w_gemm_fn pack) const;
+
   void Test(xnn_qd8_f32_qc2w_gemm_ukernel_fn gemm,
             xnn_init_f32_minmax_params_fn init_params,
             xnn_pack_qd8_qc2w_gemm_fn pack) const;
@@ -277,6 +274,25 @@ class GemmMicrokernelTester {
   void Test(xnn_qd8_f32_qc4w_gemm_ukernel_fn gemm,
             xnn_init_f32_qc4w_minmax_params_fn init_params,
             xnn_pack_qs8_qc4w_gemm_fn pack) const;
+
+  void Test(xnn_qs8_qc8w_gemm_minmax_ukernel_fn gemm,
+            xnn_init_qs8_qc8w_conv_minmax_params_fn init_params,
+            xnn_qs8_packw_gemm_goi_ukernel_fn pack,
+            xnn_qs8_requantize_fn requantize) const {
+    Test(gemm, init_params, reinterpret_cast<xnn_pack_qs8_gemm_fn>(pack), requantize);
+  }
+
+  void Test(xnn_qd8_f16_qc8w_gemm_ukernel_fn gemm,
+            xnn_init_f16_minmax_params_fn init_params,
+            xnn_qs8_packw_gemm_goi_ukernel_fn pack) const {
+    Test(gemm, init_params, reinterpret_cast<xnn_pack_qs8_gemm_fn>(pack));
+  }
+
+  void Test(xnn_qd8_f32_qc8w_gemm_ukernel_fn gemm,
+            xnn_init_f32_minmax_params_fn init_params,
+            xnn_qs8_packw_gemm_goi_ukernel_fn pack) const {
+    Test(gemm, init_params, reinterpret_cast<xnn_pack_qs8_gemm_fn>(pack));
+  }
 
   void Test(xnn_qd8_f32_qb4w_gemm_ukernel_fn gemm,
             xnn_init_f32_qb4w_minmax_params_fn init_params,
@@ -308,9 +324,6 @@ class GemmMicrokernelTester {
 
   void Test(xnn_f32_gemm_ukernel_fn gemm, xnn_pack_f32_gemm_fn pack) const;
 
-  void Test(xnn_f32_gemm_relu_ukernel_fn gemm_relu,
-            xnn_pack_f32_gemm_fn pack) const;
-
   void Test(xnn_f32_gemm_minmax_ukernel_fn gemm_minmax,
             xnn_init_f32_minmax_params_fn init_params,
             xnn_pack_f32_gemm_fn pack) const;
@@ -322,24 +335,18 @@ class GemmMicrokernelTester {
   void Test(xnn_f32_qc8w_gemm_ukernel_fn gemm,
             xnn_pack_f32_qs8w_gemm_fn pack) const;
 
-  void Test(xnn_f32_qc8w_gemm_relu_ukernel_fn gemm_relu,
-            xnn_pack_f32_qs8w_gemm_fn pack) const;
-
   void Test(xnn_f32_qc8w_gemm_minmax_ukernel_fn gemm_minmax,
             xnn_init_f32_minmax_params_fn init_params,
             xnn_pack_f32_qs8w_gemm_fn pack) const;
 
   void Test(xnn_f32_igemm_ukernel_fn igemm, xnn_pack_f32_igemm_fn pack) const;
 
-  void Test(xnn_f32_igemm_relu_ukernel_fn igemm_relu,
-            xnn_pack_f32_igemm_fn pack) const;
-
   void Test(xnn_f32_igemm_minmax_ukernel_fn igemm_minmax,
             xnn_init_f32_minmax_params_fn init_params,
             xnn_pack_f32_igemm_fn pack) const;
 
   void Test(xnn_qp8_f32_qc4w_gemm_minmax_ukernel_fn gemm,
-            xnn_init_f32_minmax_params_fn init_minmax_params,
+            xnn_init_f32_qc4w_minmax_params_fn init_minmax_params,
             xnn_pack_weights_and_biases_fn pack,
             xnn_packed_stride_weights_and_biases_fn packed_stride);
 
@@ -414,7 +421,6 @@ class GemmMicrokernelTester {
   size_t a_offset_{0};
   size_t zero_index_{0};
   bool known_nc_mod_nr_{true};
-  bool relu_{false};
   size_t mr_packed_{0};
 };
 

@@ -7,7 +7,6 @@
 #define XNNPACK_YNNPACK_BASE_SIMD_VEC_H_
 
 #include <algorithm>
-#include <array>
 #include <cassert>
 #include <cmath>
 #include <cstddef>
@@ -15,6 +14,7 @@
 #include <cstring>
 #include <type_traits>
 
+#include "ynnpack/base/arithmetic.h"
 #include "ynnpack/base/base.h"
 
 namespace ynn {
@@ -66,18 +66,33 @@ struct vec {
 
   subvec v[2];
 
-  subvec& lo() { return v[0]; }
-  const subvec& lo() const { return v[0]; }
-  subvec& hi() { return v[1]; }
-  const subvec& hi() const { return v[1]; }
-
   vec() = default;
-  YNN_ALWAYS_INLINE explicit vec(value_type x) : v{subvec{x}, subvec{x}} {}
+  YNN_ALWAYS_INLINE vec(value_type x) : v{subvec{x}, subvec{x}} {}  // NOLINT
   YNN_ALWAYS_INLINE vec(subvec v0, subvec v1) : v{v0, v1} {}
 
   YNN_ALWAYS_INLINE subvec& operator[](size_t i) { return v[i]; }
   YNN_ALWAYS_INLINE const subvec& operator[](size_t i) const { return v[i]; }
 };
+
+template <typename T, size_t N>
+YNN_ALWAYS_INLINE vec<T, N / 2>& lo(vec<T, N>& x) {
+  return x.v[0];
+}
+
+template <typename T, size_t N>
+YNN_ALWAYS_INLINE const vec<T, N / 2>& lo(const vec<T, N>& x) {
+  return x.v[0];
+}
+
+template <typename T, size_t N>
+YNN_ALWAYS_INLINE vec<T, N / 2>& hi(vec<T, N>& x) {
+  return x.v[1];
+}
+
+template <typename T, size_t N>
+YNN_ALWAYS_INLINE const vec<T, N / 2>& hi(const vec<T, N>& x) {
+  return x.v[1];
+}
 
 template <size_t N, typename T>
 YNN_ALWAYS_INLINE vec<T, N> broadcast(T x) {
@@ -127,19 +142,77 @@ vec<T, N> max(vec<T, N> a, vec<T, N> b);
 template <typename T, size_t N>
 vec<T, N> floor(vec<T, N> a);
 template <typename T, size_t N>
+vec<T, N> floor_log2(vec<T, N> a);
+// This function is permitted to use any rounding mode.
+template <typename T, size_t N>
+vec<T, N> exp2_round(vec<T, N> a);
+template <typename T, size_t N>
 vec<T, N> ceil(vec<T, N> a);
 template <typename T, size_t N>
 vec<T, N> round(vec<T, N> a);
 template <typename T, size_t N>
 vec<T, N> sqrt(vec<T, N> a);
+template <typename T, size_t N>
+vec<T, N> abs(vec<T, N> a);
+template <typename T, size_t N>
+vec<T, N> copysign(vec<T, N> mag, vec<T, N> sgn);
+template <typename T, size_t N>
+vec<T, N> add_sat(vec<T, N> a, vec<T, N> b);
+template <typename T, size_t N>
+vec<T, N> sub_sat(vec<T, N> a, vec<T, N> b);
+template <typename T, size_t N>
+vec<T, N> operator<<(vec<T, N> a, int b);
 
-template <typename T>
-std::array<vec<T, 4>, 4> transpose(std::array<vec<T, 4>, 4> x);
+// Condition vectors are typed differently depending on the implementation. They
+// should be assigned to `auto` declarations, or just used directly without
+// assignment. `select` is the only operation that can consume comparison and
+// boolean logic operations.
+template <typename T, size_t N>
+auto operator==(vec<T, N> a, vec<T, N> b);
+template <typename T, size_t N>
+auto operator!=(vec<T, N> a, vec<T, N> b);
+template <typename T, size_t N>
+auto operator<(vec<T, N> a, vec<T, N> b);
+template <typename T, size_t N>
+auto operator<=(vec<T, N> a, vec<T, N> b);
+template <typename T, size_t N>
+auto operator>(vec<T, N> a, vec<T, N> b);
+template <typename T, size_t N>
+auto operator>=(vec<T, N> a, vec<T, N> b);
+template <typename T, size_t N>
+auto isinf(vec<T, N> a);
+template <typename T, size_t N>
+auto isnan(vec<T, N> a);
+template <typename T, size_t N>
+auto isfinite(vec<T, N> a);
+
+template <typename T, size_t N, typename M>
+vec<T, N> select(M cond, vec<T, N> a, vec<T, N> b);
+
 template <int Index, typename T, size_t N, typename SliceN>
 auto extract(vec<T, N>, SliceN);
 
 template <typename To, typename From, size_t N>
-vec<To, N> convert(vec<From, N> from, To);
+YNN_ALWAYS_INLINE vec<To, N> cast(vec<From, N> from) {
+  return cast(from, To{});
+}
+
+template <typename To, typename From, size_t N>
+vec<To, N> cast(vec<From, N> from, To);
+
+template <typename T, size_t N>
+YNN_ALWAYS_INLINE vec<T, N> cast(vec<T, N> from, T) {
+  return from;
+}
+
+// horizontal_sum must be numerically equivalent to slicing the vector in half,
+// adding the halves, and repeating until the result is a scalar.
+template <typename T, size_t N>
+T horizontal_sum(vec<T, N> x);
+template <typename T, size_t N>
+T horizontal_min(vec<T, N> x);
+template <typename T, size_t N>
+T horizontal_max(vec<T, N> x);
 
 namespace internal {
 
@@ -225,6 +298,15 @@ inline int32_t mul_no_overflow(int32_t a, int32_t b) {
   return static_cast<int64_t>(a) * static_cast<int64_t>(b);
 }
 
+inline int64_t add_no_overflow(int64_t a, int64_t b) {
+  return static_cast<int64_t>(static_cast<uint64_t>(a) +
+                              static_cast<uint64_t>(b));
+}
+inline int64_t sub_no_overflow(int64_t a, int64_t b) {
+  return static_cast<int64_t>(static_cast<uint64_t>(a) -
+                              static_cast<uint64_t>(b));
+}
+
 // Overloads of the above to allow template code to work with floats too.
 inline float add_no_overflow(float a, float b) {
   return a + b;
@@ -235,6 +317,10 @@ inline float sub_no_overflow(float a, float b) {
 inline float mul_no_overflow(float a, float b) {
   return a * b;
 }
+
+inline double add_no_overflow(double a, double b) { return a + b; }
+inline double sub_no_overflow(double a, double b) { return a - b; }
+inline double mul_no_overflow(double a, double b) { return a * b; }
 
 template <typename T>
 YNN_ALWAYS_INLINE vec<T, 1> operator+(vec<T, 1> a, vec<T, 1> b) {
@@ -247,6 +333,10 @@ YNN_ALWAYS_INLINE vec<T, 1> operator-(vec<T, 1> a, vec<T, 1> b) {
 template <typename T>
 YNN_ALWAYS_INLINE vec<T, 1> operator*(vec<T, 1> a, vec<T, 1> b) {
   return vec<T, 1>{static_cast<T>(mul_no_overflow(a.v, b.v))};
+}
+template <typename T>
+YNN_ALWAYS_INLINE vec<T, 1> operator/(vec<T, 1> a, vec<T, 1> b) {
+  return vec<T, 1>{static_cast<T>(a.v / b.v)};
 }
 template <typename T>
 YNN_ALWAYS_INLINE vec<T, 1> min(vec<T, 1> a, vec<T, 1> b) {
@@ -266,16 +356,46 @@ YNN_ALWAYS_INLINE vec<T, 1> ceil(vec<T, 1> a) {
 }
 template <typename T>
 YNN_ALWAYS_INLINE vec<T, 1> round(vec<T, 1> a) {
-  return vec<T, 1>{std::round(a.v)};
+  return vec<T, 1>{std::nearbyint(a.v)};
 }
 template <typename T>
 YNN_ALWAYS_INLINE vec<T, 1> sqrt(vec<T, 1> a) {
   return vec<T, 1>{std::sqrt(a.v)};
 }
+template <typename T>
+YNN_ALWAYS_INLINE vec<T, 1> abs(vec<T, 1> a) {
+  return vec<T, 1>{std::abs(a.v)};
+}
+template <typename T>
+YNN_ALWAYS_INLINE vec<T, 1> copysign(vec<T, 1> mag, vec<T, 1> sgn) {
+  using std::copysign;
+  return vec<T, 1>{static_cast<T>(copysign(mag.v, sgn.v))};
+}
+template <typename T>
+YNN_ALWAYS_INLINE vec<T, 1> add_sat(vec<T, 1> a, vec<T, 1> b) {
+  return vec<T, 1>{add_sat(a.v, b.v)};
+}
+template <typename T>
+YNN_ALWAYS_INLINE vec<T, 1> sub_sat(vec<T, 1> a, vec<T, 1> b) {
+  return vec<T, 1>{sub_sat(a.v, b.v)};
+}
+template <typename T>
+YNN_ALWAYS_INLINE vec<T, 1> floor_log2(vec<T, 1> a) {
+  return vec<T, 1>{ynn::floor_log2(a.v)};
+}
+template <typename T>
+YNN_ALWAYS_INLINE vec<T, 1> exp2_round(vec<T, 1> a) {
+  return vec<T, 1>{ynn::exp2_round(a.v)};
+}
+
+template <typename T>
+YNN_ALWAYS_INLINE vec<T, 1> cast(vec<T, 1> from, T) {
+  return from;
+}
 
 template <typename To, typename From>
-YNN_ALWAYS_INLINE vec<To, 1> convert(vec<From, 1> from, To) {
-  return vec<To, 1>{static_cast<To>(from.v)};
+YNN_ALWAYS_INLINE vec<To, 1> cast(vec<From, 1> from, To) {
+  return vec<To, 1>{ynn::cast<To>(from.v)};
 }
 
 template <typename T>
@@ -293,6 +413,54 @@ YNN_ALWAYS_INLINE vec<T, 1> operator^(vec<T, 1> a, vec<T, 1> b) {
 template <typename T>
 YNN_ALWAYS_INLINE vec<T, 1> operator~(vec<T, 1> a) {
   return vec<T, 1>{static_cast<T>(~a.v)};
+}
+template <typename T>
+YNN_ALWAYS_INLINE vec<T, 1> operator<<(vec<T, 1> a, int bits) {
+  return vec<T, 1>{static_cast<T>(a.v << bits)};
+}
+
+template <typename T>
+YNN_ALWAYS_INLINE vec<bool, 1> isinf(vec<T, 1> a) {
+  return vec<bool, 1>{ynn::isinf(a.v)};
+}
+template <typename T>
+YNN_ALWAYS_INLINE vec<bool, 1> isnan(vec<T, 1> a) {
+  return vec<bool, 1>{ynn::isnan(a.v)};
+}
+template <typename T>
+YNN_ALWAYS_INLINE vec<bool, 1> isfinite(vec<T, 1> a) {
+  return vec<bool, 1>{ynn::isfinite(a.v)};
+}
+
+template <typename T>
+YNN_ALWAYS_INLINE vec<bool, 1> operator==(vec<T, 1> a, vec<T, 1> b) {
+  return vec<bool, 1>{a.v == b.v};
+}
+template <typename T>
+YNN_ALWAYS_INLINE vec<bool, 1> operator!=(vec<T, 1> a, vec<T, 1> b) {
+  return vec<bool, 1>{a.v != b.v};
+}
+template <typename T>
+YNN_ALWAYS_INLINE vec<bool, 1> operator<(vec<T, 1> a, vec<T, 1> b) {
+  return vec<bool, 1>{a.v < b.v};
+}
+template <typename T>
+YNN_ALWAYS_INLINE vec<bool, 1> operator<=(vec<T, 1> a, vec<T, 1> b) {
+  return vec<bool, 1>{a.v <= b.v};
+}
+template <typename T>
+YNN_ALWAYS_INLINE vec<bool, 1> operator>(vec<T, 1> a, vec<T, 1> b) {
+  return vec<bool, 1>{a.v > b.v};
+}
+template <typename T>
+YNN_ALWAYS_INLINE vec<bool, 1> operator>=(vec<T, 1> a, vec<T, 1> b) {
+  return vec<bool, 1>{a.v >= b.v};
+}
+
+template <typename T>
+YNN_ALWAYS_INLINE vec<T, 1> select(vec<bool, 1> cond, vec<T, 1> a,
+                                   vec<T, 1> b) {
+  return vec<T, 1>{cond.v ? a : b};
 }
 
 template <typename T>

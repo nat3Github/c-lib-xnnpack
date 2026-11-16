@@ -226,6 +226,13 @@ struct packw_gemm_goi_context {
   xnn_init_scale_params_fn init_scale_b;
   const void* scale_b;
   size_t scale_b_size;
+
+  // Stride, in bytes, between each batch of `scale_b` (0 for a broadcast scale
+  // shared across batches).
+  size_t gc_scale_stride;
+  // Stride, in bytes, between each output channel of `scale_b` (0 for a
+  // broadcast scale shared across channels).
+  size_t n_scale_stride;
 };
 
 XNN_PRIVATE void xnn_compute_packw_gemm_goi(
@@ -284,6 +291,13 @@ struct packw_gemm_gio_context {
   xnn_init_scale_params_fn init_scale_b;
   const void* scale_b;
   size_t scale_b_size;
+
+  // Stride, in bytes, between each batch of `scale_b` (0 for a broadcast scale
+  // shared across batches).
+  size_t gc_scale_stride;
+  // Stride, in bytes, between each output channel of `scale_b` (0 for a
+  // broadcast scale shared across channels).
+  size_t n_scale_stride;
 };
 
 XNN_PRIVATE void xnn_compute_packw_gemm_gio(
@@ -1116,6 +1130,24 @@ XNN_PRIVATE void xnn_compute_slice_4d(struct slice_context* context, size_t i,
 XNN_PRIVATE void xnn_compute_slice_5d(struct slice_context* context, size_t i,
                                       size_t j, size_t k, size_t l, size_t m);
 
+struct bf16_qd8_convert_context {
+  size_t n;
+  const void* x;
+  size_t x_stride;
+  int8_t* y;
+  size_t y_stride;
+  size_t batch_size;
+  struct xnn_qd8_quantization_params* quantization_params;
+  float* row_sum;
+  xnn_reduce_ukernel_fn rminmax_ukernel;
+  xnn_reduce_ukernel_fn rsum_ukernel;
+  xnn_vunary_ukernel_fn convert_ukernel;
+  xnn_init_unary_uparams_fn init_params;
+  union {
+    struct xnn_bf16_default_params bf16_default;
+  } params;
+};
+
 struct f16_qd8_convert_context {
   size_t n;
   const void* x;
@@ -1151,6 +1183,14 @@ struct f32_qd8_convert_context {
     struct xnn_f32_default_params f32_default;
   } params;
 };
+
+XNN_PRIVATE void xnn_compute_bf16_qd8_convert(
+    struct bf16_qd8_convert_context* context, size_t batch_offset,
+    size_t batch_range);
+
+XNN_PRIVATE void xnn_compute_bf16_qdu8_convert(
+    struct bf16_qd8_convert_context* context, size_t batch_offset,
+    size_t batch_range);
 
 XNN_PRIVATE void xnn_compute_f16_qd8_convert(
     struct f16_qd8_convert_context* context, size_t batch_offset,

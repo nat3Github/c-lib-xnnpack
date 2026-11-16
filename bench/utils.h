@@ -17,17 +17,14 @@
 #include <benchmark/benchmark.h>
 #include <pthreadpool.h>
 
-// Some of these gemm benchmarks attempt to generate 10s of thousands of
-// benchmarks. This causes a lot of problems for the compiler and linker if
-// these use lambdas or generate extra globals per benchmark. The most similar
-// macro in the benchmark framework to this is BENCHMARK_CAPTURE with no
-// extra arguments, but that creates a lambda. This is equivalent to that,
-// without the extra arguments (and lambda).
+// This might be provided by google benchmark
+#ifndef BENCHMARK_NAMED
 #define BENCHMARK_NAMED(func, test_case_name)                          \
   BENCHMARK_PRIVATE_DECLARE(_benchmark_) =                             \
       (::benchmark::internal::RegisterBenchmarkInternal(               \
           std::make_unique< ::benchmark::internal::FunctionBenchmark>( \
               #func "/" #test_case_name, func)))
+#endif  // BENCHMARK_NAMED
 
 #if defined(BENCHMARK_ARGS_BOTTLENECK)
 #define XNN_BENCHMARK_MAIN()                            \
@@ -51,6 +48,7 @@
     ::benchmark::Initialize(&argc, argv);                               \
     int status = benchmark::utils::ProcessArgs(argc, argv);             \
     if (status != 0) return status;                                     \
+    benchmark::utils::ApplyDeferredArgs();                              \
     if (::benchmark::ReportUnrecognizedArguments(argc, argv)) return 1; \
     ::benchmark::RunSpecifiedBenchmarks();                              \
   }
@@ -61,11 +59,19 @@ extern int FLAGS_num_threads;
 extern int FLAGS_batch_size;
 extern uint32_t FLAGS_xnn_runtime_flags;
 extern uint32_t FLAGS_benchmark_min_iters;
+extern bool FLAGS_wipe_caches;
 
 namespace benchmark {
 namespace utils {
 
+extern std::vector<int64_t> FLAGS_shapes;
+extern int64_t FLAGS_gemm_block_size;
+
 int ProcessArgs(int& argc, char**& argv);
+
+typedef void (*ArgsFn)(benchmark::Benchmark*);
+void DeferArgs(benchmark::Benchmark* b, ArgsFn fn);
+void ApplyDeferredArgs();
 
 uint32_t WipeCache();
 uint32_t PrefetchToL1(const void* ptr, size_t size);
@@ -108,48 +114,24 @@ static void ReduceDiscontiguousParameters(benchmark::Benchmark* b) {
   b->Args({32768, 5});
 }
 
-// Set number of elements for a unary elementwise microkernel such that:
-// - It is divisible by 2, 3, 4, 5, 6.
-// - It is divisible by AVX512 width.
-// - Total memory footprint does not exceed the characteristic cache size for
-//   the architecture.
+// Set number of elements for a unary elementwise microkernel.
+// Use a consistent number of elements to allow comparisons between different
+// data types and architectures.
 template <class InType, class OutType>
 void UnaryElementwiseParameters(benchmark::Benchmark* benchmark) {
   benchmark->ArgName("N");
-
-  size_t characteristic_l1 = 32 * 1024;
-  size_t characteristic_l2 = 256 * 1024;
-#if XNN_ARCH_ARM
-  characteristic_l1 = 16 * 1024;
-  characteristic_l2 = 128 * 1024;
-#endif  // XNN_ARCH_ARM
-
-  const size_t elementwise_size = sizeof(InType) + sizeof(OutType);
-  benchmark->Arg(characteristic_l1 / elementwise_size / 960 * 960);
-  benchmark->Arg(characteristic_l2 / elementwise_size / 960 * 960);
+  benchmark->Arg(8 * 1024);
+  benchmark->Arg(64 * 1024);
 }
 
-// Set number of elements for a binary elementwise microkernel such that:
-// - It is divisible by 2, 3, 4, 5, 6.
-// - It is divisible by AVX512 width.
-// - Total memory footprint does not exceed the characteristic cache size for
-//   the architecture.
+// Set number of elements for a binary elementwise microkernel.
+// Use a consistent number of elements to allow comparisons between different
+// data types and architectures.
 template <class InType, class OutType>
 void BinaryElementwiseParameters(benchmark::Benchmark* benchmark) {
   benchmark->ArgName("N");
-
-  size_t characteristic_l1 = 32 * 1024;
-  size_t characteristic_l2 = 256 * 1024;
-#if XNN_ARCH_ARM
-  characteristic_l1 = 16 * 1024;
-  characteristic_l2 = 128 * 1024;
-#endif  // XNN_ARCH_ARM
-
-  const size_t elementwise_size = 2 * sizeof(InType) + sizeof(OutType);
-  benchmark->Arg(
-      std::max<size_t>(1, characteristic_l1 / elementwise_size / 960) * 960);
-  benchmark->Arg(
-      std::max<size_t>(1, characteristic_l2 / elementwise_size / 960) * 960);
+  benchmark->Arg(8 * 1024);
+  benchmark->Arg(64 * 1024);
 }
 
 // Check if the architecture flags are supported.

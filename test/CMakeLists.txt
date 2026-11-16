@@ -209,6 +209,7 @@ SET(MICROKERNEL_GEMM_UNIT_TESTS
     pf16-f16-igemm-minmax
     pf32-gemm-minmax
     pqs8-qc8w-gemm-minmax
+    qd8-bf16-qb4w-gemm-minmax
     qd8-f16-qb4w-gemm-minmax
     qd8-f16-qc4w-gemm-minmax
     qd8-f16-qc8w-gemm-minmax
@@ -340,9 +341,13 @@ FOREACH(TEST ${MICROKERNEL_VBINARY_UNIT_TESTS})
 ENDFOREACH()
 
 SET(MICROKERNEL_VCVT_TESTS
+    bf16-f32-vcvt
+    bf16-qs8-vcvt
+    bf16-qu8-vcvt
     f16-f32-vcvt
     f16-qs8-vcvt
     f16-qu8-vcvt
+    f32-bf16-vcvt
     f32-f16-vcvt
     f32-qs8-vcvt
     f32-qu8-vcvt
@@ -380,9 +385,12 @@ SET(MICROKERNEL_VUNARY_TESTS
     f16-vabs
     f16-vapproxgelu
     f16-vclamp
+    f16-vcos
     f16-velu
+    f16-vexp
     f16-vgelu
     f16-vhswish
+    f16-vlog
     f16-vlrelu
     f16-vneg
     f16-vrndd
@@ -391,6 +399,7 @@ SET(MICROKERNEL_VUNARY_TESTS
     f16-vrndz
     f16-vrsqrt
     f16-vsigmoid
+    f16-vsin
     f16-vsqr
     f16-vsqrt
     f16-vtanh
@@ -460,6 +469,12 @@ TARGET_LINK_LIBRARIES(fingerprint-cache-test PRIVATE
   xnnpack-fingerprint-id)
 ADD_TEST(NAME fingerprint-cache-test COMMAND fingerprint-cache-test)
 SET_TARGET_PROPERTIES(fingerprint-cache-test PROPERTIES CXX_EXTENSIONS YES)
+
+ADD_EXECUTABLE(polyfill-test polyfill.cc)
+TARGET_LINK_LIBRARIES(polyfill-test PRIVATE
+  xnnpack-test)
+ADD_TEST(NAME polyfill-test COMMAND polyfill-test)
+SET_TARGET_PROPERTIES(polyfill-test PROPERTIES CXX_EXTENSIONS YES)
 
 IF(XNNPACK_BUILD_LIBRARY)
   ADD_EXECUTABLE(weights-cache-test weights-cache.cc)

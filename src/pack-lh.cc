@@ -82,12 +82,11 @@ struct InitQuantizationParams {
 
 template <typename InputT, typename OutputT, typename qs8_cvt_params_t,
           typename InitQuantizationParams<InputT>::fn init_quantization_params>
-static void pack_lh_fx_qd(size_t m, size_t k, size_t mr_packed, size_t kr,
-                          size_t sr, size_t m_idx_start, const InputT* lhs,
-                          size_t lhs_stride, void* lhs_packed,
-                          xnn_vunary_ukernel_fn convert_ukernel,
-                          xnn_reduce_ukernel_fn minmax_ukernel,
-                          xnn_reduce_ukernel_fn rsum_ukernel) {
+static XNN_NO_SANITIZE_FUNCTION void pack_lh_fx_qd(
+    size_t m, size_t k, size_t mr_packed, size_t kr, size_t sr,
+    size_t m_idx_start, const InputT* lhs, size_t lhs_stride, void* lhs_packed,
+    xnn_vunary_ukernel_fn convert_ukernel, xnn_reduce_ukernel_fn minmax_ukernel,
+    xnn_reduce_ukernel_fn rsum_ukernel) {
   assert(m_idx_start == 0);
 
   struct xnn_f32_default_params minmax_params;
@@ -292,6 +291,20 @@ void xnn_pack_lh_f16_qduint8(size_t m, size_t k, size_t mr_packed, size_t kr,
       lhs_packed, convert_ukernel, minmax_ukernel, /*rsum_ukernel=*/nullptr);
 }
 
+void xnn_pack_lh_bf16_qdint8(size_t m, size_t k, size_t mr_packed, size_t kr,
+                             size_t sr, size_t m_idx_start, const void* lhs,
+                             size_t lhs_stride, void* lhs_packed) {
+  static const xnn_vunary_ukernel_fn convert_ukernel =
+      xnn_init_bf16_to_qs8_cvt_config()->ukernel;
+  static const xnn_reduce_ukernel_fn minmax_ukernel =
+      xnn_init_bf16_rminmax_config()->ukernel;
+  pack_lh_fx_qd</*InputT=*/xnn_bfloat16, /*OutputT=*/int8_t,
+                /*qs8_cvt_params_t=*/struct xnn_bf16_qs8_cvt_params,
+                xnn_bf16_qd8_asymmetric_quantization_params>(
+      m, k, mr_packed, kr, sr, m_idx_start, (const xnn_bfloat16*)lhs, lhs_stride,
+      lhs_packed, convert_ukernel, minmax_ukernel, /*rsum_ukernel=*/nullptr);
+}
+
 }  // namespace
 
 extern "C" {
@@ -308,6 +321,24 @@ const xnn_pack_lh_config* xnn_init_f16_qdint8_pack_lh_config() {
     config.size_fn = (xnn_pack_lh_size_fn)xnn_pack_lh_fx_qd8_packed_size;
     config.offset_fn = (xnn_pack_lh_offset_fn)xnn_pack_lh_fx_qd8_packed_offset;
     config.log2_input_element_size = XNN_LOG2_SIZEOF_FLOAT16;
+    config.log2_packed_element_size = 0;
+    return config;
+  }();
+  return &config;
+}
+
+const xnn_pack_lh_config* xnn_init_bf16_qdint8_pack_lh_config() {
+  const xnn_hardware_config* hardware_config =
+      xnn_init_hardware_config();
+  if (hardware_config == nullptr) {
+    return nullptr;
+  }
+  static const xnn_pack_lh_config config = []() {
+    xnn_pack_lh_config config = {};
+    config.pack_lh_fn = (xnn_pack_lh_ukernel_fn)xnn_pack_lh_bf16_qdint8;
+    config.size_fn = (xnn_pack_lh_size_fn)xnn_pack_lh_fx_qd8_packed_size;
+    config.offset_fn = (xnn_pack_lh_offset_fn)xnn_pack_lh_fx_qd8_packed_offset;
+    config.log2_input_element_size = XNN_LOG2_SIZEOF_BFLOAT16;
     config.log2_packed_element_size = 0;
     return config;
   }();

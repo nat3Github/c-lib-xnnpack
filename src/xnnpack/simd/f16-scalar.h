@@ -22,6 +22,8 @@ typedef xnn_float16 xnn_simd_f16_t;
 
 #define XNN_SIMD_CONST_F16(var, val) static const xnn_simd_f16_t var = val;
 
+#define XNN_SIMD_CONST_F16_FROM_INT16(var, val) \
+  const xnn_simd_f16_t var = xnn_float16_from_bits(val);
 #define XNN_SIMD_CONST_F16_FROM_FLOAT(var, val) \
   const xnn_simd_f16_t var = xnn_float16_from_float(val);
 
@@ -148,6 +150,14 @@ static XNN_INLINE xnn_simd_f16_t xnn_abs_f16(xnn_simd_f16_t a) {
 #endif  // XNN_HAVE_FLOAT16
 }
 
+static XNN_INLINE xnn_simd_f16_t xnn_sqrt_f16(xnn_simd_f16_t a) {
+#if XNN_HAVE_FLOAT16
+  return sqrtf(a);
+#else
+  return xnn_float16_from_float(sqrtf(xnn_float16_to_float(a)));
+#endif  // XNN_HAVE_FLOAT16
+}
+
 static XNN_INLINE xnn_simd_f16_t xnn_neg_f16(xnn_simd_f16_t a) {
 #if XNN_HAVE_FLOAT16
   return -a;
@@ -180,12 +190,25 @@ static XNN_INLINE xnn_simd_f16_t xnn_xor_f16(xnn_simd_f16_t a,
   return xnn_float16_from_bits(xnn_float16_to_bits(a) ^ xnn_float16_to_bits(b));
 }
 
+static XNN_INLINE xnn_simd_f16_t xnn_not_f16(xnn_simd_f16_t a) {
+  return xnn_float16_from_bits(~xnn_float16_to_bits(a));
+}
+
+static XNN_INLINE xnn_simd_f16_t xnn_andnot_f16(xnn_simd_f16_t a,
+                                                xnn_simd_f16_t b) {
+  return xnn_and_f16(xnn_not_f16(a), b);
+}
+
 static XNN_INLINE xnn_simd_f16_t xnn_sll_f16(xnn_simd_f16_t a, uint8_t bits) {
   return xnn_float16_from_bits(xnn_float16_to_bits(a) << bits);
 }
 
 static XNN_INLINE xnn_simd_f16_t xnn_srl_f16(xnn_simd_f16_t a, uint8_t bits) {
   return xnn_float16_from_bits(xnn_float16_to_bits(a) >> bits);
+}
+
+static XNN_INLINE xnn_simd_f16_t xnn_sra_f16(xnn_simd_f16_t a, uint8_t bits) {
+  return xnn_float16_from_bits((uint16_t)((int16_t)xnn_float16_to_bits(a) >> bits));
 }
 
 static XNN_INLINE xnn_simd_f16_t xnn_cmpeq_f16(xnn_simd_f16_t a,
@@ -237,6 +260,14 @@ static XNN_INLINE void xnn_store_tail_f16(xnn_simd_f16_t *output,
                                           xnn_simd_f16_t v,
                                           size_t num_elements) {
   *output = v;
+}
+
+// Conversion operations.
+static XNN_INLINE float xnn_cvt_f32_f16(xnn_simd_f16_t a) {
+  return xnn_float16_to_float(a);
+}
+static XNN_INLINE xnn_simd_f16_t xnn_cvt_f16_f32(float a) {
+  return xnn_float16_from_float(a);
 }
 
 #endif  // XNNPACK_SRC_XNNPACK_SIMD_F16_SCALAR_H_

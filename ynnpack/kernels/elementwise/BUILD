@@ -10,12 +10,17 @@ py_library(
     name = "generator",
     srcs = [
         "arm.py",
-        "common_rules.py",
         "compiler.py",
         "generator.py",
+        "hexagon.py",
+        "rules.py",
+        "wasm.py",
         "x86.py",
     ],
-    tags = ["manual"],
+    tags = [
+        "manual",
+        "notap",
+    ],
     visibility = [
         "//ynnpack/kernels/binary:__pkg__",
         "//ynnpack/kernels/ternary:__pkg__",
@@ -28,6 +33,7 @@ py_test(
     srcs = ["compiler_test.py"],
     tags = [
         "manual",
+        "notap",
         "xnnpack_tap_main_only",
     ],
     deps = [":generator"],

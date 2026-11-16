@@ -12,6 +12,9 @@
 #define XNNPACK_SRC_XNNPACK_INTRINSICS_POLYFILL_H_
 
 #include "src/xnnpack/common.h"
+#if XNN_ARCH_HEXAGON
+#include "src/xnnpack/math.h"
+#endif  // XNN_ARCH_HEXAGON
 #include "src/xnnpack/unaligned.h"
 
 static XNN_INTRINSIC uint32_t broadcast2x_uint16(uint16_t x) {
@@ -190,11 +193,11 @@ static XNN_INTRINSIC __m512i _mm512_dpbusd_epi32_madd(__m512i i32,
                                                       const __m512i u8,
                                                       const __m512i u4) {
   const __m512i vzero_point = _mm512_set1_epi8(8);
-  const __m512i vone = _mm512_set1_epi16(1);
+  const __m512i vminus_one = _mm512_set1_epi16(-1);
   const __m512i i4 = _mm512_sub_epi8(u4, vzero_point);
   const __m512i i12 = _mm512_maddubs_epi16(u8, i4);  // u8 * i4 = i12
-  const __m512i v = _mm512_madd_epi16(i12, vone);  // convert 16 bits to 32 bits
-  return _mm512_add_epi32(i32, v);
+  const __m512i v = _mm512_madd_epi16(i12, vminus_one);  // convert 16 bits to 32 bits
+  return _mm512_sub_epi32(i32, v);
 }
 #endif  // __AVX512BW__
 #endif  // __AVX512F__
@@ -211,11 +214,11 @@ static XNN_INTRINSIC __m256i _mm256_dpbusd_offset_epi32_madd(__m256i i32,
   assert(offset <= 8);
   assert(offset >= 0);
   const __m256i vzero_point = _mm256_set1_epi8(offset);
-  const __m256i vone = _mm256_set1_epi16(1);
+  const __m256i vminus_one = _mm256_set1_epi16(-1);
   const __m256i biased_i4 = _mm256_sub_epi8(i4, vzero_point);  // offset i4
   const __m256i i12 = _mm256_maddubs_epi16(u8, biased_i4);     // u8 * i4 = i12
-  const __m256i v = _mm256_madd_epi16(i12, vone);  // convert 16 bits to 32 bits
-  return _mm256_add_epi32(i32, v);
+  const __m256i v = _mm256_madd_epi16(i12, vminus_one);  // convert 16 bits to 32 bits
+  return _mm256_sub_epi32(i32, v);
 }
 
 // AVXVNNI replacement that uses vpmaddubsw.
@@ -227,11 +230,11 @@ static XNN_INTRINSIC __m256i _mm256_dpbusd_epi32_madd(__m256i i32,
 }
 
 // AVXVNNI replacement that uses vpmaddubsw.
-// u4 is uint4 in lower 4 bits.
+// u2 is uint2 in lower 2 bits.
 static XNN_INTRINSIC __m256i _mm256_dpbusd_epi32_madd_kzp2(__m256i i32,
                                                       const __m256i u8,
-                                                      const __m256i u4) {
-  return _mm256_dpbusd_offset_epi32_madd(i32, u8, u4, 2);
+                                                      const __m256i u2) {
+  return _mm256_dpbusd_offset_epi32_madd(i32, u8, u2, 2);
 }
 
 #endif  // __AVX2__
@@ -247,11 +250,24 @@ static XNN_INTRINSIC __m128i _mm_dpbusd_epi32_madd(__m128i i32,
                                                    const __m128i u8,
                                                    const __m128i u4) {
   const __m128i vzero_point = _mm_set1_epi8(8);
-  const __m128i vone = _mm_set1_epi16(1);
+  const __m128i vminus_one = _mm_set1_epi16(-1);
   const __m128i i4 = _mm_sub_epi8(u4, vzero_point);  // convert uint4 to int4
   const __m128i i12 = _mm_maddubs_epi16(u8, i4);     // u8 * i4 = i12
-  const __m128i v = _mm_madd_epi16(i12, vone);  // convert 16 bits to 32 bits
-  return _mm_add_epi32(i32, v);
+  const __m128i v = _mm_madd_epi16(i12, vminus_one);  // convert 16 bits to 32 bits
+  return _mm_sub_epi32(i32, v);
+}
+
+// SSE VNNI replacement for 2 bit.
+// u2 is uint2 in lower 2 bits.
+static XNN_INTRINSIC __m128i _mm_dpbusd_epi32_madd_kzp2(__m128i i32,
+                                                   const __m128i u8,
+                                                   const __m128i u2) {
+  const __m128i vzero_point = _mm_set1_epi8(2);
+  const __m128i vminus_one = _mm_set1_epi16(-1);
+  const __m128i i2 = _mm_sub_epi8(u2, vzero_point);  // convert uint2 to int2
+  const __m128i i10 = _mm_maddubs_epi16(u8, i2);     // u8 * i2 = i10
+  const __m128i v = _mm_madd_epi16(i10, vminus_one);  // convert 16 bits to 32 bits
+  return _mm_sub_epi32(i32, v);
 }
 
 #endif  // defined(__SSSE3__) || defined _M_X64 || (defined _M_IX86_FP &&
@@ -406,18 +422,15 @@ static XNN_INTRINSIC void Q6_V_vstu_variable(void* addr, uint32_t n,
 static XNN_INTRINSIC HVX_Vector fast_inverse__vsf(xnn_hvx_vector_t vin) {
   const uint32_t fp_exp_norm = 0x7F000000;  // IEEE sf: sign=0, exp=254, mant=0
   const uint32_t fp_exp_mask = 0xFF800000;  // mask for IEEE sf exp
-  const uint32_t nr_T1 = 0x5a5a5a7f;   // Newton Raphson T1=24.0/17.0 (qf32)
-  const uint32_t nr_T2 = 0x8787877d;   // Newton Raphson T2=-8.0/17.0 (qf32)
-  const uint32_t qf_one = 0x4000007F;  // 1.0 (qf32)
 
   xnn_hvx_vector_t vfp_exp_norm = Q6_V_vsplat_R(fp_exp_norm);
   xnn_hvx_vector_t vfp_exp_mask = Q6_V_vsplat_R(fp_exp_mask);
 
-  xnn_hvx_vector_t vnr_T1 = Q6_V_vsplat_R(nr_T1);
-  xnn_hvx_vector_t vnr_T2 = Q6_V_vsplat_R(nr_T2);
-
-  xnn_hvx_vector_t vone = Q6_V_vsplat_R(qf_one);
   xnn_hvx_vector_t vzero = Q6_V_vzero();
+
+  xnn_hvx_vector_t vnr_T1 = Q6_Vqf32_vadd_VsfVsf(Q6_V_vsplat_R(float_as_uint32(24.0f / 17.0f)), vzero);
+  xnn_hvx_vector_t vnr_T2 = Q6_Vqf32_vadd_VsfVsf(Q6_V_vsplat_R(float_as_uint32(-8.0f / 17.0f)), vzero);
+  xnn_hvx_vector_t vone = Q6_Vqf32_vadd_VsfVsf(Q6_V_vsplat_R(float_as_uint32(1.0f)), vzero);
 
   // IEEE sf: sign[i] = sign(den[i]), exp[i] = exp(den[i]), mant = 0
   xnn_hvx_vector_t vfp_exp = Q6_V_vand_VV(vin, vfp_exp_mask);

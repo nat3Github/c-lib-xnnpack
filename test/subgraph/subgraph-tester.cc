@@ -62,7 +62,7 @@ SubgraphTester& SubgraphTester::AddInternalDynamicallyQuantizedTensor(
     const TensorShape& shape, xnn_datatype datatype, size_t num_nonbatch_dims,
     uint32_t* id_out, uint32_t flags) {
   const xnn_status status = xnn_define_dynamically_quantized_tensor_value(
-      subgraph_.get(), xnn_datatype_qdint8, shape.Rank(), num_nonbatch_dims,
+      subgraph_.get(), datatype, shape.Rank(), num_nonbatch_dims,
       shape.Dims(), XNN_INVALID_VALUE_ID, flags, id_out);
   EXPECT_EQ(status, xnn_status_success);
   return *this;
@@ -124,6 +124,21 @@ SubgraphTester& SubgraphTester::AddStaticChannelwiseQuantizedTensor(
       data, external_id, flags, &id_out);
   EXPECT_EQ(status, xnn_status_success);
   EXPECT_EQ(id_out, external_id);
+  return *this;
+}
+
+SubgraphTester& SubgraphTester::AddDynamicChannelwiseQuantizedTensor(
+    const TensorShape& shape, size_t channel_dim, xnn_datatype datatype,
+    const float* scale, uint32_t external_id, void* data) {
+  assert(external_id < xnn_subgraph_get_num_external_values(subgraph_.get()));
+  uint32_t id_out;
+  const xnn_status status = xnn_define_channelwise_quantized_tensor_value(
+      subgraph_.get(), datatype, scale, shape.Rank(), channel_dim, shape.Dims(),
+      data, external_id, XNN_VALUE_FLAG_EXTERNAL_INPUT, &id_out);
+  EXPECT_EQ(status, xnn_status_success);
+  EXPECT_EQ(id_out, external_id);
+  auto it = external_tensors_.insert({external_id, data});
+  EXPECT_TRUE(it.second);
   return *this;
 }
 
@@ -285,25 +300,14 @@ SubgraphTester& SubgraphTester::AddConcatenate(size_t axis,
   return *this;
 }
 
-SubgraphTester& SubgraphTester::AddConstantPad(const size_t* pre_paddings,
-                                               const size_t* post_paddings,
-                                               float padding_value,
-                                               uint32_t input_id,
-                                               uint32_t output_id) {
-  const xnn_status status = xnn_define_static_constant_pad(
-      subgraph_.get(), pre_paddings, post_paddings, padding_value, input_id,
-      output_id, /*flags=*/0);
-  EXPECT_EQ(status, xnn_status_success);
-  return *this;
-}
-
 SubgraphTester& SubgraphTester::AddConstantPad(
     const std::vector<size_t>& pre_paddings,
     const std::vector<size_t>& post_paddings, float padding_value,
     uint32_t input_id, uint32_t output_id) {
-  const xnn_status status = xnn_define_static_constant_pad(
-      subgraph_.get(), pre_paddings.data(), post_paddings.data(), padding_value,
-      input_id, output_id, /*flags=*/0);
+  assert(pre_paddings.size() == post_paddings.size());
+  const xnn_status status = xnn_define_static_constant_pad_v2(
+      subgraph_.get(), pre_paddings.size(), pre_paddings.data(),
+      post_paddings.data(), padding_value, input_id, output_id, /*flags=*/0);
   EXPECT_EQ(status, xnn_status_success);
   return *this;
 }

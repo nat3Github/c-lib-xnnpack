@@ -9,7 +9,6 @@
 #include <cstdint>
 #include <iostream>
 #include <numeric>
-#include <optional>
 #include <vector>
 
 #include <gmock/gmock.h>
@@ -34,17 +33,14 @@ TEST(CloneSubgraphSubset, SimpleChain) {
   //   a -> (abs) -> b.
   const int kShapeSize = 10;
   uint32_t a_id = 0;
-  uint32_t b_id = YNN_INVALID_VALUE_ID;
+  uint32_t b_id = 1;
   uint32_t c_id = YNN_INVALID_VALUE_ID;
 
   // Create original subgraph.
-  SubgraphBuilder builder(/*external_value_count=*/1);
+  SubgraphBuilder builder(/*external_value_count=*/2);
   builder.AddInput(ynn_type_fp32, {kShapeSize}, a_id);
   // Make `b_id` an external output in order to check for numerical correctness.
-  builder.AddTensor(ynn_type_fp32, {kShapeSize}, b_id, /*data=*/nullptr,
-                    /*zero_point_id=*/YNN_INVALID_VALUE_ID,
-                    /*scale_id=*/YNN_INVALID_VALUE_ID,
-                    /*flags=*/YNN_VALUE_FLAG_EXTERNAL_OUTPUT);
+  builder.AddOutput(ynn_type_fp32, {kShapeSize}, b_id);
   builder.AddTensor(ynn_type_fp32, {kShapeSize}, c_id);
   builder.AddUnary(ynn_unary_abs, a_id, b_id)
       .AddUnary(ynn_unary_negate, b_id, c_id);
@@ -62,7 +58,7 @@ TEST(CloneSubgraphSubset, SimpleChain) {
   std::cout << "Cloned subgraph: " << "\n";
   cloned_subgraph->dump(std::cout);
 
-  ASSERT_TRUE(cloned_subgraph.has_value());
+  ASSERT_NE(cloned_subgraph, nullptr);
   EXPECT_THAT(*cloned_subgraph,
               AllOf(HasValidValueCount(2), HasValidNodeCount(1),
                     HasValidValueIds(cloned_a_id, cloned_b_id)));
@@ -102,21 +98,19 @@ TEST(CloneSubgraphSubset, BranchingFails) {
   //                    \ -> (add) -> c
   // d -> (negate) -> e ->
   const int kShapeSize = 10;
-  uint32_t a_id = 0, d_id = 1;
+  uint32_t a_id = 0;
+  uint32_t d_id = 1;
+  uint32_t c_id = 2;
   uint32_t b_id = YNN_INVALID_VALUE_ID;
-  uint32_t c_id = YNN_INVALID_VALUE_ID;
   uint32_t e_id = YNN_INVALID_VALUE_ID;
 
   // Create original subgraph.
-  SubgraphBuilder builder(/*external_value_count=*/2);
+  SubgraphBuilder builder(/*external_value_count=*/3);
   builder.AddInput(ynn_type_fp32, {kShapeSize}, a_id)
       .AddInput(ynn_type_fp32, {kShapeSize}, d_id);
   builder.AddTensor(ynn_type_fp32, {kShapeSize}, b_id)
       .AddTensor(ynn_type_fp32, {kShapeSize}, e_id);
-  builder.AddTensor(ynn_type_fp32, {kShapeSize}, c_id, /*data=*/nullptr,
-                    /*zero_point_id=*/YNN_INVALID_VALUE_ID,
-                    /*scale_id=*/YNN_INVALID_VALUE_ID,
-                    /*flags=*/YNN_VALUE_FLAG_EXTERNAL_OUTPUT);
+  builder.AddOutput(ynn_type_fp32, {kShapeSize}, c_id);
   builder.AddUnary(ynn_unary_abs, a_id, b_id)
       .AddUnary(ynn_unary_negate, d_id, e_id)
       .AddBinary(ynn_binary_add, b_id, e_id, c_id);
@@ -127,7 +121,7 @@ TEST(CloneSubgraphSubset, BranchingFails) {
   uint32_t cloned_c_id = YNN_INVALID_VALUE_ID;
   auto cloned_subgraph =
       clone_subgraph_subset(original, a_id, c_id, cloned_a_id, cloned_c_id);
-  EXPECT_FALSE(cloned_subgraph.has_value());
+  EXPECT_EQ(cloned_subgraph, nullptr);
 }
 
 TEST(CloneSubgraphSubset, MiddleCut) {
@@ -138,21 +132,15 @@ TEST(CloneSubgraphSubset, MiddleCut) {
   //   b -> (negate) -> c.
   const int kShapeSize = 10;
   uint32_t a_id = 0;
-  uint32_t b_id = YNN_INVALID_VALUE_ID;
-  uint32_t c_id = YNN_INVALID_VALUE_ID;
+  uint32_t b_id = 1;
+  uint32_t c_id = 2;
   uint32_t d_id = YNN_INVALID_VALUE_ID;
 
   // Create original subgraph.
-  SubgraphBuilder builder(/*external_value_count=*/1);
+  SubgraphBuilder builder(/*external_value_count=*/3);
   builder.AddInput(ynn_type_fp32, {kShapeSize}, a_id);
-  builder.AddTensor(ynn_type_fp32, {kShapeSize}, b_id, /*data=*/nullptr,
-                    /*zero_point_id=*/YNN_INVALID_VALUE_ID,
-                    /*scale_id=*/YNN_INVALID_VALUE_ID,
-                    /*flags=*/YNN_VALUE_FLAG_EXTERNAL_OUTPUT);
-  builder.AddTensor(ynn_type_fp32, {kShapeSize}, c_id, /*data=*/nullptr,
-                    /*zero_point_id=*/YNN_INVALID_VALUE_ID,
-                    /*scale_id=*/YNN_INVALID_VALUE_ID,
-                    /*flags=*/YNN_VALUE_FLAG_EXTERNAL_OUTPUT);
+  builder.AddOutput(ynn_type_fp32, {kShapeSize}, b_id);
+  builder.AddOutput(ynn_type_fp32, {kShapeSize}, c_id);
   builder.AddTensor(ynn_type_fp32, {kShapeSize}, d_id);
   builder.AddUnary(ynn_unary_abs, a_id, b_id)
       .AddUnary(ynn_unary_negate, b_id, c_id)
@@ -164,7 +152,7 @@ TEST(CloneSubgraphSubset, MiddleCut) {
   uint32_t cloned_c_id = YNN_INVALID_VALUE_ID;
   auto cloned_subgraph =
       clone_subgraph_subset(original, b_id, c_id, cloned_b_id, cloned_c_id);
-  ASSERT_TRUE(cloned_subgraph.has_value());
+  ASSERT_NE(cloned_subgraph, nullptr);
   EXPECT_THAT(*cloned_subgraph,
               AllOf(HasValidValueCount(2), HasValidNodeCount(1),
                     HasValidValueIds(cloned_b_id, cloned_c_id)));
@@ -208,17 +196,14 @@ TEST(CloneSubgraphSubset, DisconnectedInput) {
   const int kShapeSize = 10;
   uint32_t a_id = 0;
   uint32_t c_id = 1;
-  uint32_t b_id = YNN_INVALID_VALUE_ID;
+  uint32_t b_id = 2;
   uint32_t d_id = YNN_INVALID_VALUE_ID;
 
   // Create original subgraph.
-  SubgraphBuilder builder(/*external_value_count=*/2);
+  SubgraphBuilder builder(/*external_value_count=*/3);
   builder.AddInput(ynn_type_fp32, {kShapeSize}, a_id);
   builder.AddInput(ynn_type_fp32, {kShapeSize}, c_id);
-  builder.AddTensor(ynn_type_fp32, {kShapeSize}, b_id, /*data=*/nullptr,
-                    /*zero_point_id=*/YNN_INVALID_VALUE_ID,
-                    /*scale_id=*/YNN_INVALID_VALUE_ID,
-                    /*flags=*/YNN_VALUE_FLAG_EXTERNAL_OUTPUT);
+  builder.AddOutput(ynn_type_fp32, {kShapeSize}, b_id);
   builder.AddTensor(ynn_type_fp32, {kShapeSize}, d_id);
   builder.AddUnary(ynn_unary_abs, a_id, b_id)
       .AddUnary(ynn_unary_negate, c_id, d_id);
@@ -229,7 +214,7 @@ TEST(CloneSubgraphSubset, DisconnectedInput) {
   uint32_t cloned_c_id = YNN_INVALID_VALUE_ID;
   auto cloned_subgraph =
       clone_subgraph_subset(original, c_id, b_id, cloned_c_id, cloned_b_id);
-  EXPECT_FALSE(cloned_subgraph.has_value());
+  EXPECT_EQ(cloned_subgraph, nullptr);
 }
 
 }  // namespace

@@ -151,6 +151,54 @@ NO_YNNPACK = [
 ]]
 
 xnnpack_unit_test(
+    name = "fp16_to_fp32_fallback_test",
+    srcs = ["fp16-to-fp32-fallback.cc"],
+    tags = ["no_ynnpack"],
+    deps = [
+        "//:XNNPACK",
+        "//:common",
+        "//:node_type",
+        "//:operator_utils",
+        "//:subgraph",
+        "//litert/tensor",
+        "//litert/tensor:arithmetic",
+        "//litert/tensor:buffer",
+        "//litert/tensor:datatypes",
+        "//litert/tensor/backends/xnnpack:arithmetic",
+        "//litert/tensor/backends/xnnpack:conversion",
+        "//litert/tensor/utils:matchers_no_g3",
+        "//src/configs:config_h",
+        "//src/configs:hardware_config",
+        "//src/subgraph/rewrites:cvt_to_fp32",
+        "//test/subgraph/rewrites:subgraph_matcher",
+    ],
+)
+
+xnnpack_unit_test(
+    name = "bf16_to_fp32_fallback_test",
+    srcs = ["bf16-to-fp32-fallback.cc"],
+    tags = ["no_ynnpack"],
+    deps = [
+        "//:XNNPACK",
+        "//:common",
+        "//:node_type",
+        "//:operator_utils",
+        "//:subgraph",
+        "//litert/tensor",
+        "//litert/tensor:arithmetic",
+        "//litert/tensor:buffer",
+        "//litert/tensor:datatypes",
+        "//litert/tensor/backends/xnnpack:arithmetic",
+        "//litert/tensor/backends/xnnpack:conversion",
+        "//litert/tensor/utils:matchers_no_g3",
+        "//src/configs:config_h",
+        "//src/configs:hardware_config",
+        "//src/subgraph/rewrites:cvt_to_fp32",
+        "//test/subgraph/rewrites:subgraph_matcher",
+    ],
+)
+
+xnnpack_unit_test(
     name = "workspace_test",
     srcs = ["workspace.cc"],
     tags = ["no_ynnpack"],
@@ -179,8 +227,15 @@ xnnpack_unit_test(
 xnnpack_unit_test(
     name = "batch_matrix_multiply_test",
     srcs = ["batch-matrix-multiply.cc"],
+    defines = select({
+        "//ynnpack/xnnpack:use_ynnpack": ["XNNPACK_USE_YNNPACK"],
+        "//conditions:default": [],
+    }),
     shard_count = 5,
-    deps = SUBGRAPH_TEST_DEPS,
+    deps = SUBGRAPH_TEST_DEPS + [
+        "//:microparams_h",
+        "//:quantization",
+    ],
 )
 
 xnnpack_unit_test(
@@ -203,7 +258,6 @@ xnnpack_unit_test(
 xnnpack_unit_test(
     name = "depthwise_convolution_2d_test",
     srcs = ["depthwise-convolution-2d.cc"],
-    tags = ["no_ynnpack"],
     deps = SUBGRAPH_TEST_DEPS + [":stencil"],
 )
 
@@ -229,7 +283,6 @@ xnnpack_unit_test(
     name = "rope_test",
     timeout = "moderate",
     srcs = ["rope.cc"],
-    tags = ["no_ynnpack"],
     deps = SUBGRAPH_TEST_DEPS,
 )
 
@@ -244,6 +297,10 @@ xnnpack_unit_test(
     name = "static_transpose_test",
     timeout = "moderate",
     srcs = ["static-transpose.cc"],
+    defines = select({
+        "//ynnpack/xnnpack:use_ynnpack": ["XNNPACK_USE_YNNPACK"],
+        "//conditions:default": [],
+    }),
     shard_count = 5,
     deps = SUBGRAPH_TEST_DEPS,
 )
@@ -343,9 +400,9 @@ xnnpack_unit_test(
         "//:node_type",
         "//:operator_h",
         "//:params",
-        "//:subgraph",
         "//:subgraph_h",
         "//:xnnpack_h",
+        "//src/configs:hardware_config",
         "//test:replicable_random_device",
     ],
 )
@@ -358,5 +415,20 @@ xnnpack_unit_test(
         "//:buffer",
         "//:operator_utils",
         "//test:replicable_random_device",
+    ],
+)
+
+xnnpack_unit_test(
+    name = "planning_test",
+    srcs = ["planning.cc"],
+    tags = ["no_ynnpack"],
+    deps = [
+        "//:xnnpack_h",
+        "//litert/tensor",
+        "//litert/tensor:arithmetic",
+        "//litert/tensor:datatypes",
+        "//litert/tensor/backends/xnnpack:arithmetic",
+        "//litert/tensor/backends/xnnpack:conversion",
+        "//litert/tensor/utils:matchers_no_g3",
     ],
 )

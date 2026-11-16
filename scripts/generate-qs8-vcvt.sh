@@ -53,7 +53,7 @@ tools/xngen src/qs8-vcvt/avx2.c.in -D BATCH_TILE=16 -D DATATYPE=QU8 -o src/qu8-v
 tools/xngen src/qs8-vcvt/avx2.c.in -D BATCH_TILE=32 -D DATATYPE=QU8 -o src/qu8-vcvt/gen/qu8-vcvt-avx2-u32.c &
 tools/xngen src/qs8-vcvt/avx2.c.in -D BATCH_TILE=64 -D DATATYPE=QU8 -o src/qu8-vcvt/gen/qu8-vcvt-avx2-u64.c &
 
-################################## WAsm SIMD ##################################
+################################## Wasm SIMD ##################################
 tools/xngen src/qs8-vcvt/wasmsimd.c.in -D BATCH_TILE=8  -D RELAXED=0 -D DATATYPE=QS8 -o src/qs8-vcvt/gen/qs8-vcvt-wasmsimd-u8.c &
 tools/xngen src/qs8-vcvt/wasmsimd.c.in -D BATCH_TILE=16 -D RELAXED=0 -D DATATYPE=QS8 -o src/qs8-vcvt/gen/qs8-vcvt-wasmsimd-u16.c &
 tools/xngen src/qs8-vcvt/wasmsimd.c.in -D BATCH_TILE=32 -D RELAXED=0 -D DATATYPE=QS8 -o src/qs8-vcvt/gen/qs8-vcvt-wasmsimd-u32.c &
@@ -76,6 +76,15 @@ tools/xngen src/qs8-vcvt/armsimd32.c.in -D BATCH_TILE=8 -D DATATYPE=QS8 -o src/q
 
 tools/xngen src/qs8-vcvt/armsimd32.c.in -D BATCH_TILE=4 -D DATATYPE=QU8 -o src/qu8-vcvt/gen/qu8-vcvt-armsimd32-u4.c &
 tools/xngen src/qs8-vcvt/armsimd32.c.in -D BATCH_TILE=8 -D DATATYPE=QU8 -o src/qu8-vcvt/gen/qu8-vcvt-armsimd32-u8.c &
+
+################################## RISC-V Vector ##############################
+tools/xngen src/qs8-vcvt/rvv.c.in -D LMUL=1 -D DATATYPE=QS8 -o src/qs8-vcvt/gen/qs8-vcvt-rvv-u1v.c &
+tools/xngen src/qs8-vcvt/rvv.c.in -D LMUL=2 -D DATATYPE=QS8 -o src/qs8-vcvt/gen/qs8-vcvt-rvv-u2v.c &
+tools/xngen src/qs8-vcvt/rvv.c.in -D LMUL=4 -D DATATYPE=QS8 -o src/qs8-vcvt/gen/qs8-vcvt-rvv-u4v.c &
+
+tools/xngen src/qs8-vcvt/rvv.c.in -D LMUL=1 -D DATATYPE=QU8 -o src/qu8-vcvt/gen/qu8-vcvt-rvv-u1v.c &
+tools/xngen src/qs8-vcvt/rvv.c.in -D LMUL=2 -D DATATYPE=QU8 -o src/qu8-vcvt/gen/qu8-vcvt-rvv-u2v.c &
+tools/xngen src/qs8-vcvt/rvv.c.in -D LMUL=4 -D DATATYPE=QU8 -o src/qu8-vcvt/gen/qu8-vcvt-rvv-u4v.c &
 
 #################################### Scalar ###################################
 tools/xngen src/qs8-vcvt/scalar.c.in -D BATCH_TILE=1 -D DATATYPE=QS8 -o src/qs8-vcvt/gen/qs8-vcvt-scalar-u1.c &

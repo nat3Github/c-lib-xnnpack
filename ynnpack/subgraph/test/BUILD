@@ -5,14 +5,14 @@
 
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
-load("//ynnpack:build_defs.bzl", "ynn_binary_linkopts", "ynn_binary_malloc", "ynn_test_deps")
+load("//ynnpack:build_defs.bzl", "ynn_benchmark_deps", "ynn_binary_linkopts", "ynn_binary_malloc", "ynn_test_deps")
 
 cc_library(
     name = "scheduler",
     testonly = True,
     srcs = ["scheduler.cc"],
     hdrs = ["scheduler.h"],
-    visibility = ["//ynnpack/subgraph:__subpackages__"],
+    visibility = ["//ynnpack:__subpackages__"],
     deps = [
         "//ynnpack:ynnpack_h",
         "@slinky//slinky/base:thread_pool_impl",
@@ -39,9 +39,9 @@ cc_library(
     hdrs = ["matchers.h"],
     deps = [
         "//ynnpack:ynnpack_h",
+        "//ynnpack/base",
         "//ynnpack/subgraph",
-        "@com_google_googletest//:gtest",
-        "@slinky//slinky/base",
+        "@com_google_googletest//:gtest",  # no g3
     ],
 )
 
@@ -73,6 +73,20 @@ cc_test(
 cc_test(
     name = "invalidate_dead_values",
     srcs = ["invalidate_dead_values.cc"],
+    linkopts = ynn_binary_linkopts(),
+    malloc = ynn_binary_malloc(),
+    deps = [
+        ":matchers",
+        ":subgraph_builder",
+        "//ynnpack:ynnpack_h",
+        "//ynnpack/base",
+        "//ynnpack/subgraph",
+    ] + ynn_test_deps(),
+)
+
+cc_test(
+    name = "tensor",
+    srcs = ["tensor.cc"],
     linkopts = ynn_binary_linkopts(),
     malloc = ynn_binary_malloc(),
     deps = [
@@ -122,33 +136,38 @@ cc_test(
     srcs = ["dot.cc"],
     linkopts = ynn_binary_linkopts(),
     malloc = ynn_binary_malloc(),
-    shard_count = 18,
+    shard_count = 24,
+    tags = ["nowasm"],  # b/525770952
     deps = TEST_DEPS,
 )
 
 cc_test(
     name = "fusion",
-    srcs = select({
-        # This test assumes we can pattern match and use ternary kernels, which are only guaranteed
-        # to exist on x86, and the logic being tested is architecture independent.
-        "//ynnpack:x86": ["fusion.cc"],
+    srcs = [
+        "fusion_copy.cc",
+        "fusion_lut.cc",
+        "fusion_reduce.cc",
+    ] + select({
+        # This test assumes we can pattern match and use kernels, which are only guaranteed to exist
+        # on x86, and the logic being tested is architecture independent.
+        "//ynnpack:x86": ["fusion_arithmetic.cc"],
         "//conditions:default": [],
     }),
     linkopts = ynn_binary_linkopts(),
     malloc = ynn_binary_malloc(),
     deps = TEST_DEPS + [
+        "//ynnpack/kernels/dequantize_dot",
         "//ynnpack/kernels/ternary",
         "//ynnpack/subgraph",
     ],
 )
 
 cc_test(
-    name = "fusion_lut",
-    srcs = ["fusion_lut.cc"],
+    name = "gelu",
+    srcs = ["gelu.cc"],
     linkopts = ynn_binary_linkopts(),
     malloc = ynn_binary_malloc(),
     deps = TEST_DEPS + [
-        "//ynnpack/kernels/ternary",
         "//ynnpack/subgraph",
     ],
 )
@@ -178,14 +197,17 @@ cc_test(
 ) for name in [
     "concatenate",
     "copy",
+    "dynamic_quantization",
     "broadcast_like",
     "errors",
     "even_split",
     "fuse_dim",
     "fuse_dims",
+    "gather",
     "get_tensor_shape",
-    "lut",
+    "iota",
     "reduce",
+    "reduce_dot",
     "runtime",
     "split_dim",
     "stack",
@@ -194,8 +216,12 @@ cc_test(
     "static_pad",
     "static_reshape",
     "static_slice",
+    "slice_like",
     "static_transpose",
     "stencil_copy",
+    "polynomial",
+    "partial_reduce_dot",
+    "sub_byte_types",
 ]]
 
 cc_test(
@@ -207,11 +233,44 @@ cc_test(
 )
 
 cc_test(
+    name = "loop_fusion",
+    srcs = ["loop_fusion.cc"],
+    linkopts = ynn_binary_linkopts(),
+    malloc = ynn_binary_malloc(),
+    deps = TEST_DEPS + [
+        "//ynnpack/subgraph",
+        "@slinky//slinky/runtime",
+    ],
+)
+
+cc_test(
     name = "utils",
     srcs = ["utils.cc"],
     linkopts = ynn_binary_linkopts(),
     malloc = ynn_binary_malloc(),
     deps = TEST_DEPS + ["//ynnpack/subgraph"],
+)
+
+cc_test(
+    name = "attention_bench",
+    srcs = [
+        "attention_bench.cc",
+        "attention_graph.cc",
+        "attention_graph.h",
+    ],
+    args = ["--benchmark_min_time=1x"],
+    linkopts = ynn_binary_linkopts(),
+    malloc = ynn_binary_malloc(),
+    tags = [
+        "manual",
+        "notap",
+    ],
+    deps = [
+        ":scheduler",
+        "//ynnpack",
+        "//ynnpack/base",
+        "//ynnpack/composites",
+    ] + ynn_benchmark_deps(),
 )
 
 cc_test(
@@ -224,6 +283,93 @@ cc_test(
         ":scheduler",
         "//ynnpack",
         "//ynnpack/base",
+        "//ynnpack/base/test:util",
         "@com_google_benchmark//:benchmark",
     ],
+)
+
+cc_test(
+    name = "slinky_bench",
+    srcs = ["slinky_bench.cc"],
+    linkopts = ynn_binary_linkopts(),
+    malloc = ynn_binary_malloc(),
+    deps = [
+        "//ynnpack/subgraph",
+        "@com_google_benchmark//:benchmark",
+        "@slinky//slinky/runtime",
+    ],
+)
+
+cc_test(
+    name = "pi_bench",
+    srcs = ["pi_bench.cc"],
+    args = ["--benchmark_min_time=1x"],
+    linkopts = ynn_binary_linkopts(),
+    malloc = ynn_binary_malloc(),
+    deps = [
+        ":scheduler",
+        "//ynnpack",
+        "//ynnpack/base",
+        "//ynnpack/subgraph",
+    ] + ynn_benchmark_deps(),
+)
+
+cc_test(
+    name = "gather_bench",
+    srcs = ["gather_bench.cc"],
+    args = ["--benchmark_min_time=1x"],
+    linkopts = ynn_binary_linkopts(),
+    malloc = ynn_binary_malloc(),
+    deps = [
+        "//ynnpack",
+        "//ynnpack/base",
+        "//ynnpack/base/test:buffer",
+        "//ynnpack/base/test:random",
+        "//ynnpack/base/test:tensor",
+    ] + ynn_benchmark_deps(),
+)
+
+cc_test(
+    name = "transpose_bench",
+    srcs = ["transpose_bench.cc"],
+    args = ["--benchmark_min_time=1x"],
+    linkopts = ynn_binary_linkopts(),
+    malloc = ynn_binary_malloc(),
+    deps = [
+        ":scheduler",
+        "//ynnpack",
+        "//ynnpack/base",
+    ] + ynn_benchmark_deps(),
+)
+
+cc_test(
+    name = "concatenated_mixed_dot_bench",
+    srcs = ["concatenated_mixed_dot_bench.cc"],
+    args = ["--benchmark_min_time=1x"],
+    linkopts = ynn_binary_linkopts(),
+    malloc = ynn_binary_malloc(),
+    tags = ["noemulator"],
+    deps = [
+        ":scheduler",
+        ":subgraph_builder",
+        "//ynnpack",
+        "//ynnpack/base",
+        "//ynnpack/base/test:tensor",
+    ] + ynn_benchmark_deps(),
+)
+
+cc_test(
+    name = "reduce_bench",
+    srcs = ["reduce_bench.cc"],
+    args = ["--benchmark_min_time=1x"],
+    linkopts = ynn_binary_linkopts(),
+    malloc = ynn_binary_malloc(),
+    deps = [
+        ":scheduler",
+        ":subgraph_builder",
+        "//ynnpack",
+        "//ynnpack/base",
+        "//ynnpack/base/test:tensor",
+        "//ynnpack/base/test:util",
+    ] + ynn_benchmark_deps(),
 )

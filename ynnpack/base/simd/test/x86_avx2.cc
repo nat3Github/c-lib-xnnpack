@@ -3,10 +3,11 @@
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree.
 
-#include "ynnpack/base/simd/x86_avx2.h"
-
 #include <gtest/gtest.h>
 #include "ynnpack/base/arch.h"
+#include "ynnpack/base/simd/x86_vec256.h"
+
+// This must be included last
 #include "ynnpack/base/simd/test/generic.h"
 
 namespace ynn {
@@ -28,6 +29,16 @@ TEST_SUBTRACT(x86_avx2, u8, 32);
 TEST_SUBTRACT(x86_avx2, s8, 32);
 TEST_SUBTRACT(x86_avx2, s32, 8);
 
+TEST_ADD_SAT(x86_avx2, u8, 32);
+TEST_ADD_SAT(x86_avx2, s8, 32);
+TEST_ADD_SAT(x86_avx2, u16, 16);
+TEST_ADD_SAT(x86_avx2, s16, 16);
+
+TEST_SUB_SAT(x86_avx2, u8, 32);
+TEST_SUB_SAT(x86_avx2, s8, 32);
+TEST_SUB_SAT(x86_avx2, u16, 16);
+TEST_SUB_SAT(x86_avx2, s16, 16);
+
 TEST_MULTIPLY(x86_avx2, s32, 8);
 
 TEST_MIN(x86_avx2, u8, 32);
@@ -40,6 +51,24 @@ TEST_MAX(x86_avx2, s8, 32);
 TEST_MAX(x86_avx2, s16, 16);
 TEST_MAX(x86_avx2, s32, 8);
 
+TEST_SHIFT_LEFT(x86_avx2, s16, 16);
+TEST_SHIFT_LEFT(x86_avx2, s32, 8);
+
+TEST_ABS(x86_avx2, s8, 32);
+TEST_ABS(x86_avx2, s16, 16);
+TEST_ABS(x86_avx2, s32, 8);
+
+TEST_FLOOR_LOG2(x86_avx2, f32, 8);
+TEST_FLOOR_LOG2(x86_avx2, f64, 4);
+TEST_EXP2_ROUND(x86_avx2, f32, 8);
+TEST_EXP2_ROUND(x86_avx2, f64, 4);
+TEST_COMPARISONS(x86_avx2, f32, 8);
+TEST_COMPARISONS(x86_avx2, f64, 4);
+TEST_ISNAN(x86_avx2, f32, 8);
+TEST_ISNAN(x86_avx2, f64, 4);
+TEST_ISFINITE(x86_avx2, f32, 8);
+TEST_ISFINITE(x86_avx2, f64, 4);
+
 TEST_HORIZONTAL_MIN(x86_avx2, u8, 32);
 TEST_HORIZONTAL_MIN(x86_avx2, s8, 32);
 TEST_HORIZONTAL_MIN(x86_avx2, s16, 16);
@@ -50,9 +79,21 @@ TEST_HORIZONTAL_MAX(x86_avx2, s8, 32);
 TEST_HORIZONTAL_MAX(x86_avx2, s16, 16);
 TEST_HORIZONTAL_MAX(x86_avx2, s32, 8);
 
-TEST_CONVERT(x86_avx2, f32, bf16x8);
-TEST_CONVERT(x86_avx2, s32, u8x16);
-TEST_CONVERT(x86_avx2, s32, s8x16);
+TEST_CAST(x86_avx2, f32, bf16x16);
+TEST_CAST(x86_avx2, f32, bf16x8);
+TEST_CAST(x86_avx2, bf16, f32x16);
+TEST_CAST(x86_avx2, bf16, f32x8);
+TEST_CAST(x86_avx2, s32, u8x16);
+TEST_CAST(x86_avx2, s32, s8x16);
+TEST_CAST(x86_avx2, f32, s32x8);
+TEST_CAST(x86_avx2, s32, f32x8);
+
+TEST_CAST(x86_avx2, s16, s32x16);
+TEST_CAST(x86_avx2, u8, s16x32);
+TEST_CAST(x86_avx2, s8, s16x32);
+TEST_CAST(x86_avx2, u8, f32x32);
+TEST_CAST(x86_avx2, s8, f32x32);
+TEST_CAST(x86_avx2, s16, f32x16);
 
 }  // namespace simd
 }  // namespace ynn

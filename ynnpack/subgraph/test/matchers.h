@@ -18,17 +18,21 @@
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "ynnpack/base/span.h"
 #include "ynnpack/include/ynnpack.h"
+#include "ynnpack/subgraph/static_transpose.h"
 #include "ynnpack/subgraph/subgraph.h"
-#include "slinky/base/span.h"
 
-// This causes gmock to print the subgraph instead of just a hex encoded dump of
-// the memory. It needs to be in the global namespace for argument dependent
-// lookup to work.
+// This causes gmock to print the subgraph/node instead of just a hex encoded
+// dump of the memory. It needs to be in the global namespace for argument
+// dependent lookup to work.
 inline std::ostream& operator<<(std::ostream& os, const ynn_subgraph& g) {
   os << "subgraph:" << std::endl;
   g.dump(os);
   return os;
+}
+inline std::ostream& operator<<(std::ostream& os, const ynn_node& node) {
+  return os << node.to_string();
 }
 
 namespace ynn {
@@ -109,8 +113,14 @@ MATCHER_P(HasInputCount, count, "") {
 // Checks that the given node is a LUT.
 //
 // Example:
-//   EXPECT_THAT(ProducerOf(y_id, subgraph), IsLut());
-MATCHER(IsLut, "") { return std::holds_alternative<ynn_node::lut>(arg.op); }
+//   EXPECT_THAT(ProducerOf(y_id, subgraph), IsLut(subgraph));
+MATCHER_P(IsLut, subgraph, "") {
+  const auto* g = std::get_if<ynn_node::gather>(&arg.op);
+  if (!g) return false;
+  if (g->axes.size() != 1 || g->axes[0] != 0) return false;
+  const ynn_value& table = subgraph.value(arg.inputs[0]);
+  return table.rank() == 1;
+}
 
 // Checks that the given node is a binary elementwise with the given operator.
 //
@@ -182,9 +192,117 @@ MATCHER_P(IsStencilCopy, stencils, "") {
   return true;
 }
 
+MATCHER_P(IsExpandDims, subgraph, "") {
+  const ynn_node::static_transpose* transpose =
+      std::get_if<ynn_node::static_transpose>(&arg.op);
+  if (!transpose) return false;
+  const ynn_subgraph* s = internal::GetSubgraph(subgraph, result_listener);
+  if (!s) return false;
+  return get_static_expand_dims_axes(*transpose, s->value(arg.inputs[0]).rank())
+      .has_value();
+}
+
 MATCHER(IsCopy, "") {
   const ynn_node::copy* copy = std::get_if<ynn_node::copy>(&arg.op);
   return copy != nullptr;
+}
+
+// Checks that the given node is a quantize.
+//
+// Example:
+//   EXPECT_THAT(ProducerOf(y_id, subgraph), IsQuantize());
+MATCHER(IsQuantize, "") {
+  const ynn_node::ternary_elementwise* ternary =
+      std::get_if<ynn_node::ternary_elementwise>(&arg.op);
+  return ternary && (ternary->op == ternary_op::quantize_int8 ||
+                     ternary->op == ternary_op::quantize_uint8);
+}
+
+// Checks that the given node is a dequantize.
+//
+// Example:
+//   EXPECT_THAT(ProducerOf(y_id, subgraph), IsDequantize());
+MATCHER(IsDequantize, "") {
+  return std::get_if<ynn_node::ternary_elementwise>(&arg.op) &&
+         std::get<ynn_node::ternary_elementwise>(arg.op).op ==
+             ternary_op::dequantize;
+}
+
+// Checks that the given node is a dequantize_dot.
+//
+// Example:
+//   EXPECT_THAT(ProducerOf(y_id, subgraph), IsDequantizeDot());
+MATCHER(IsDequantizeDot, "") {
+  return std::holds_alternative<ynn_node::dequantize_dot>(arg.op);
+}
+
+// Checks that the given node is a dynamic quantization with the given output
+// zero point.
+//
+// Example:
+//   EXPECT_THAT(ProducerOf(zp_id, subgraph), IsDynamicQuantization(0));
+MATCHER_P(IsDynamicQuantization, output_zero_point, "") {
+  const auto* dq = std::get_if<ynn_node::dynamic_quantization>(&arg.op);
+  if (!dq) {
+    *result_listener << "is not a dynamic quantization node";
+    return false;
+  }
+  if (dq->output_zero_point != output_zero_point) {
+    *result_listener << "has output zero point " << dq->output_zero_point;
+    return false;
+  }
+  return true;
+}
+
+// Checks that the given node is a dot.
+//
+// Example:
+//   EXPECT_THAT(ProducerOf(y_id, subgraph), IsDot());
+MATCHER(IsDot, "") { return std::holds_alternative<ynn_node::dot>(arg.op); }
+
+// Checks that the given node is an iota.
+//
+// Example:
+//   EXPECT_THAT(ProducerOf(y_id, subgraph), IsIota());
+MATCHER(IsIota, "") { return std::holds_alternative<ynn_node::iota>(arg.op); }
+
+// Checks that the given node is a broadcast_like.
+//
+// Example:
+//   EXPECT_THAT(ProducerOf(y_id, subgraph), IsBroadcastLike());
+MATCHER(IsBroadcastLike, "") {
+  return std::holds_alternative<ynn_node::broadcast_like>(arg.op);
+}
+MATCHER(IsStaticBroadcast, "") {
+  return std::holds_alternative<ynn_node::static_broadcast>(arg.op);
+}
+MATCHER(IsStaticReshape, "") {
+  return std::holds_alternative<ynn_node::static_reshape>(arg.op);
+}
+MATCHER(IsStaticSlice, "") {
+  return std::holds_alternative<ynn_node::static_slice>(arg.op);
+}
+MATCHER(IsStaticTranspose, "") {
+  return std::holds_alternative<ynn_node::static_transpose>(arg.op);
+}
+MATCHER_P(IsStaticTransposeWithPerm, perm_matcher, "") {
+  const ynn_node::static_transpose* transpose =
+      std::get_if<ynn_node::static_transpose>(&arg.op);
+  return transpose &&
+         testing::ExplainMatchResult(perm_matcher, transpose->permutation,
+                                     result_listener);
+}
+
+// Checks that the given value has the given type.
+//
+// Example:
+//   EXPECT_THAT(subgraph.value(x_id), HasType(ynn_type_fp32));
+MATCHER_P(HasType, type, "") {
+  if (arg.type != type) {
+    *result_listener << "has type " << arg.type;
+    return false;
+  }
+  return true;
 }
 
 // Checks that the given value ID is valid in the given subgraph.
@@ -196,7 +314,7 @@ MATCHER_P(HasValidValueId, value_id, "") {
   if (subgraph == nullptr) {
     return false;
   }
-  if (!subgraph->value(value_id).is_valid()) {
+  if (!subgraph->is_valid_value(value_id)) {
     *result_listener << "value " << value_id << " is invalid";
     return false;
   }
@@ -212,7 +330,7 @@ MATCHER_P(IsValidValueIn, subgraph, "") {
   if (s == nullptr) {
     return false;
   }
-  if (!s->value(arg).is_valid()) {
+  if (!s->is_valid_value(arg)) {
     *result_listener << "value " << arg << " is invalid";
     return false;
   }
@@ -285,7 +403,7 @@ inline const ynn_node& ProducerOf(uint32_t value_id,
 //   EXPECT_THAT(ValuesIn<float>(subgraph.value(x_id)),
 //               testing::ElementsAre(1.0f, 2.0f, 3.0f));
 template <typename T>
-slinky::span<const T> ValuesIn(const ynn_value& value) {
+span<const T> ValuesIn(const ynn_value& value) {
   if (!value.is_static()) {
     return {};
   }
@@ -293,7 +411,7 @@ slinky::span<const T> ValuesIn(const ynn_value& value) {
   if (count == 0) {
     return {};
   }
-  return slinky::span<const T>(static_cast<const T*>(value.data->base), count);
+  return span<const T>(static_cast<const T*>(value.data->base), count);
 }
 
 }  // namespace ynn

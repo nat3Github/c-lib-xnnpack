@@ -67,6 +67,37 @@ def _copts_for_compiler(copts):
         "//conditions:default": copts,
     })
 
+_YNN_IMPLIED_ARCHS = {
+    "arm_neonfma": ["arm_neon"],
+    "arm_neonfp16": ["arm_neon"],
+    "arm_neonfp16arith": ["arm_neon"],
+    "arm_neonfp8": ["arm_neon"],
+    "arm_neonbf16": ["arm_neon"],
+    "arm64_neon": ["arm_neonfma"],
+    "arm64_neoni8mm": ["arm64_neon"],
+    "arm64_neonfp8": ["arm64_neon"],
+    "arm64_neonfp8dot4": ["arm64_neonfp8"],
+    "arm64_sme": ["arm64_neon"],
+    "arm64_sme2": ["arm64_neon"],
+    "arm64_sve": ["arm64_neon"],
+    "x86_avx2_fma3": ["x86_avx2", "x86_fma3"],
+    "x86_avx512": ["x86_fma3", "x86_avx2", "x86_f16c"],
+    "x86_avx512bf16": ["x86_avx512"],
+    "x86_avx512fp16": ["x86_avx512"],
+    "x86_avx512vnni": ["x86_avx512"],
+    "x86_amxbf16": ["x86_avx512"],
+    "x86_amxfp16": ["x86_avx512"],
+    "x86_amxint8": ["x86_avx512"],
+    "x86_avx2": ["x86_avx"],
+    "x86_fma3": ["x86_avx"],
+    "x86_f16c": ["x86_avx"],
+    "x86_f16c_fma3": ["x86_avx", "x86_fma3"],
+    "x86_avx": ["x86_sse41"],
+    "x86_sse41": ["x86_ssse3"],
+    "x86_ssse3": ["x86_sse2"],
+    "x86_sse2_fma": ["x86_sse2"],
+}
+
 _YNN_PARAMS_FOR_ARCH = {
     "arm_neon": {
         "cond": "//ynnpack:ynn_enable_arm_neon",
@@ -129,6 +160,20 @@ _YNN_PARAMS_FOR_ARCH = {
             "//conditions:default": [],
         }),
         "arch_flag": "neonfp16arith",
+        "arch_defines": ["YNN_ARCH_FP16_ARITHMETIC"],
+    },
+    "arm64_neonfp8": {
+        "cond": "//ynnpack:ynn_enable_arm64_neonfp8",
+        "arch_copts": select({
+            "//ynnpack:arm64": ["-march=armv8.2-a+fp8+bf16"],
+            "//conditions:default": [],
+        }),
+        "arch_flag": "neonfp8",
+    },
+    "arm64_neonfp8dot4": {
+        "cond": "//ynnpack:ynn_enable_arm64_neonfp8dot4",
+        "arch_copts": ["-march=armv8.2-a+fp8+fp8dot4"],
+        "arch_flag": "neonfp8dot4",
     },
     "arm_neonbf16": {
         "cond": "//ynnpack:ynn_enable_arm_neonbf16",
@@ -184,6 +229,12 @@ _YNN_PARAMS_FOR_ARCH = {
         "arch_copts": _copts_for_compiler(["-msse2", "-mno-ssse3"]),
         "arch_flag": "sse2",
     },
+    "x86_sse2_fma": {
+        "cond": "//ynnpack:ynn_enable_x86_sse2_fma",
+        "arch_copts": _copts_for_compiler(["-msse2"]),
+        "arch_flag": "sse2_fma",
+        "arch_defines": ["YNN_ARCH_EMULATE_FMA"],
+    },
     "x86_ssse3": {
         "cond": "//ynnpack:ynn_enable_x86_ssse3",
         "arch_copts": _copts_for_compiler(["-mssse3", "-mno-sse4.1"]),
@@ -238,6 +289,7 @@ _YNN_PARAMS_FOR_ARCH = {
         "cond": "//ynnpack:ynn_enable_x86_avx512fp16",
         "arch_copts": _copts_for_compiler(_AVX512_COPTS + ["-mavx512fp16"]),
         "arch_flag": "avx512fp16",
+        "arch_defines": ["YNN_ARCH_FP16_ARITHMETIC"],
     },
     "x86_avx512vnni": {
         "cond": "//ynnpack:ynn_enable_x86_avx512vnni",
@@ -264,6 +316,11 @@ _YNN_PARAMS_FOR_ARCH = {
         "arch_copts": ["-mhvx"],
         "arch_flag": "hvx",
     },
+    "wasm_simd128": {
+        "cond": "//ynnpack:ynn_enable_wasm_simd128",
+        "arch_copts": ["-msimd128"],
+        "arch_flag": "wasm_simd128",
+    },
 }
 
 def ynn_if_arch(arch, if_true, if_false = []):
@@ -278,6 +335,26 @@ def ynn_arch_copts(arch):
 def ynn_arch_flag(arch):
     return _YNN_PARAMS_FOR_ARCH[arch].get("arch_flag", "")
 
+def ynn_arch_defines(arch):
+    """Returns a list of architecture-specific macros to define."""
+    archs = {arch: True}
+    for _ in range(10):
+        new_archs = {}
+        for a in archs:
+            for implied in _YNN_IMPLIED_ARCHS.get(a, []):
+                if implied not in archs:
+                    new_archs[implied] = True
+        if not new_archs:
+            break
+        archs.update(new_archs)
+
+    all_defines = {}
+    for a in archs:
+        all_defines["YNN_ARCH_" + a.upper()] = True
+        for extra_define in _YNN_PARAMS_FOR_ARCH[a].get("arch_defines", []):
+            all_defines[extra_define] = True
+    return list(all_defines.keys())
+
 def ynn_kernel_copts(unroll_loops = True):
     return select({
         "//ynnpack:msvc": ["/O2"],
@@ -289,6 +366,19 @@ def ynn_binary_linkopts():
         "//ynnpack:hexagon": [
             "-shared",
             "-Wno-unused-command-line-argument",
+        ],
+        "//ynnpack:wasm": [
+            "-s STACK_SIZE=1MB",
+            "-s DEFAULT_PTHREAD_STACK_SIZE=1MB",
+            # This option allows to remain on the main thread and busy-wait (spin) to avoid the crash.
+            # This option works gracefully with or without --features=use_pthreads, though it may freeze the browser UI while busy-waiting.
+            # Another option would be to use https://emscripten.org/docs/tools_reference/settings_reference.html#proxy-to-pthread,
+            # but it requires --features=use_pthreads to be set.
+            "-s ALLOW_BLOCKING_ON_MAIN_THREAD=1",
+            # Pre-allocates Web Workers at module initialization so that synchronous
+            # calls to pthread_create don't crash or deadlock while waiting for
+            # asynchronous Web Worker instantiation.
+            "-s PTHREAD_POOL_SIZE=8",
         ],
         "//conditions:default": [],
     })
@@ -302,7 +392,7 @@ def ynn_binary_malloc():
 def ynn_test_deps():
     return select({
         "//ynnpack:hexagon": [
-            "@com_google_googletest//:gtest",
+            "@com_google_googletest//:gtest",  # no g3
             "//ynnpack/base/hexagon:test_main",
         ],
         "//conditions:default": ["@com_google_googletest//:gtest_main"],
@@ -349,8 +439,8 @@ def ynn_cc_library(
         cc_library(
             name = name + "_" + arch,
             srcs = ynn_if_arch(arch, arch_srcs, []),
-            defines = defines + ["YNN_ARCH_" + arch.upper()],
-            local_defines = local_defines + ["ARCH=" + arch],
+            defines = defines + ynn_if_arch(arch, ynn_arch_defines(arch)),
+            local_defines = local_defines + ynn_arch_defines(arch),
             copts = copts + arch_copts,
             hdrs_check = "strict",
             deps = deps,
@@ -359,7 +449,7 @@ def ynn_cc_library(
                 "-use_header_modules",
             ] + kwargs.get("features", []),
             # Don't build this target unless explicitly requested.
-            tags = ["manual"],
+            tags = ["manual", "notap"],
             **kwargs
         )
 
@@ -388,6 +478,25 @@ def ynn_generate_src_hdr(
         name = name,
         outs = [output_src, output_hdr],
         cmd = "$(location " + generator + ") " + "$(location " + output_src + ") " + "$(location " + output_hdr + ") " + " ".join(generator_args),
+        tools = [generator],
+        **kwargs
+    )
+
+    generated_file(
+        scopes = ["presubmit", "codesearch"],
+        wrapped_target = name,
+    )
+
+def ynn_generate_srcs(
+        name,
+        generator,
+        output_srcs,
+        **kwargs):
+    """Generates source files from a generator script."""
+    native.genrule(
+        name = name,
+        outs = output_srcs,
+        cmd = "$(location " + generator + ") " + " ".join(["$(location " + i + ")" for i in output_srcs]),
         tools = [generator],
         **kwargs
     )

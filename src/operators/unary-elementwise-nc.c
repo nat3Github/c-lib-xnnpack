@@ -66,7 +66,7 @@ static enum xnn_status init_lut_op(
   return xnn_status_success;
 }
 
-static enum xnn_status init_lut_op_with_config(
+static XNN_NO_SANITIZE_FUNCTION enum xnn_status init_lut_op_with_config(
     xnn_operator_t op,
     const struct xnn_unary_elementwise_config* reference_config,
     const union xnn_unary_params* params,
@@ -93,7 +93,9 @@ static const struct xnn_unary_elementwise_config* get_config(
     const struct xnn_quantization_params* output_quantization, uint32_t flags) {
   if (input_datatype != output_datatype) {
     if (op_type == xnn_unary_convert) {
-      if (input_datatype == xnn_datatype_fp32 && output_datatype == xnn_datatype_fp16) {
+      if (input_datatype == xnn_datatype_fp32 && output_datatype == xnn_datatype_bf16) {
+        return xnn_init_f32_to_bf16_cvt_config();
+      } else if (input_datatype == xnn_datatype_fp32 && output_datatype == xnn_datatype_fp16) {
         return xnn_init_f32_to_f16_cvt_config();
       } else if (input_datatype == xnn_datatype_fp32 && output_datatype == xnn_datatype_qint8) {
         return xnn_init_f32_to_qs8_cvt_config();
@@ -101,6 +103,8 @@ static const struct xnn_unary_elementwise_config* get_config(
         return xnn_init_f32_to_qu8_cvt_config();
       } else if (input_datatype == xnn_datatype_fp32 && output_datatype == xnn_datatype_qpint8) {
         return xnn_init_f32_to_qp8_cvt_config();
+      } else if (input_datatype == xnn_datatype_bf16 && output_datatype == xnn_datatype_fp32) {
+        return xnn_init_bf16_to_f32_cvt_config();
       } else if (input_datatype == xnn_datatype_fp16 && output_datatype == xnn_datatype_fp32) {
         return xnn_init_f16_to_f32_cvt_config();
       } else if (input_datatype == xnn_datatype_fp16 && output_datatype == xnn_datatype_qint8) {
@@ -174,6 +178,8 @@ static const struct xnn_unary_elementwise_config* get_config(
         return xnn_init_f16_hswish_config();
       case xnn_unary_leaky_relu:
         return xnn_init_f16_lrelu_config();
+      case xnn_unary_log:
+        return xnn_init_f16_log_config();
       case xnn_unary_negate:
         return xnn_init_f16_neg_config();
       case xnn_unary_reciprocal_square_root:
@@ -224,7 +230,7 @@ static const struct xnn_unary_elementwise_config* get_config(
       case xnn_unary_reciprocal_square_root:
         return xnn_init_f32_rsqrt_config(flags);
       case xnn_unary_sigmoid:
-        return xnn_init_f32_sigmoid_config();
+        return xnn_init_f32_sigmoid_config(flags);
       case xnn_unary_sine:
         return xnn_init_f32_sine_config(flags);
       case xnn_unary_square_root:
@@ -240,7 +246,7 @@ static const struct xnn_unary_elementwise_config* get_config(
   return NULL;
 }
 
-static enum xnn_status init_op(
+static XNN_NO_SANITIZE_FUNCTION enum xnn_status init_op(
     xnn_operator_t op,
     enum xnn_unary_operator op_type,
     enum xnn_datatype input_datatype,
@@ -342,6 +348,7 @@ enum xnn_status xnn_create_unary_elementwise_nc(
     xnn_log_error("failed to allocate %zu bytes for %s operator descriptor",
                   sizeof(struct compute_parameters),
                   xnn_unary_operator_to_string(op_type));
+    xnn_delete_operator(op);
     return xnn_status_out_of_memory;
   }
   op->num_compute_invocations = num_compute_invocations;
@@ -631,6 +638,7 @@ static enum xnn_status create_unary_elementwise_nc(
     xnn_log_error("failed to allocate %zu bytes for %s operator descriptor",
                   sizeof(struct compute_parameters),
                   xnn_operator_type_to_string(operator_type));
+    xnn_delete_operator(unary_elementwise_op);
     return xnn_status_out_of_memory;
   }
   unary_elementwise_op->num_compute_invocations = num_compute_invocations;
@@ -835,6 +843,24 @@ enum xnn_status create_convert_nc_qx8(
   return status;
 }
 
+enum xnn_status xnn_create_convert_nc_bf16_qd8(
+  uint32_t flags,
+  xnn_operator_t* convert_op_out) {
+  return create_convert_nc_qx8(
+      flags, xnn_init_bf16_to_qs8_cvt_config(), xnn_init_bf16_rminmax_config(),
+      xnn_init_qs8_rsum_config(), xnn_operator_type_convert_nc_bf16_qd8,
+      convert_op_out);
+}
+
+enum xnn_status xnn_create_convert_nc_bf16_qdu8(
+  uint32_t flags,
+  xnn_operator_t* convert_op_out) {
+  return create_convert_nc_qx8(
+      flags, xnn_init_bf16_to_qu8_cvt_config(), xnn_init_bf16_rminmax_config(),
+      xnn_init_qu8_rsum_config(), xnn_operator_type_convert_nc_bf16_qdu8,
+      convert_op_out);
+}
+
 enum xnn_status xnn_create_convert_nc_f16_qd8(
   uint32_t flags,
   xnn_operator_t* convert_op_out) {
@@ -904,6 +930,16 @@ enum xnn_status xnn_create_copy_nc_x8(
     xnn_operator_type_copy_nc_x8, copy_op_out);
 }
 
+enum xnn_status xnn_create_convert_nc_qs8_qc8(
+    uint32_t flags,
+    xnn_operator_t* convert_op_out)
+{
+  return create_unary_elementwise_nc(
+    flags, xnn_init_xx_copy_config(),
+    /*params=*/NULL, /*params_size=*/0,
+    xnn_operator_type_convert_nc_qs8_qc8, convert_op_out);
+}
+
 enum xnn_status xnn_create_copy_nc_x16(
     uint32_t flags,
     xnn_operator_t* copy_op_out)
@@ -922,6 +958,73 @@ enum xnn_status xnn_create_copy_nc_x32(
     flags, xnn_init_xx_copy_config(),
     /*params=*/NULL, /*params_size=*/0,
     xnn_operator_type_copy_nc_x32, copy_op_out);
+}
+
+enum xnn_status reshape_convert_nc_bf16_qx8(
+    xnn_operator_t convert_op,
+    size_t batch_size,
+    size_t channels,
+    size_t input_stride,
+    size_t output_stride,
+    enum xnn_operator_type expected_type,
+    pthreadpool_t threadpool)
+{
+  if (convert_op->type != expected_type) {
+    xnn_log_error(
+        "failed to setup operator: operator type mismatch (expected %s, got "
+        "%s)",
+        xnn_operator_type_to_string(expected_type),
+        xnn_operator_type_to_string_v2(convert_op));
+    return xnn_status_invalid_parameter;
+  }
+  convert_op->state = xnn_run_state_invalid;
+
+  if (batch_size == 0) {
+    convert_op->state = xnn_run_state_skip;
+    return xnn_status_success;
+  }
+
+  convert_op->batch_size = batch_size;
+
+  convert_op->context.bf16_qd8_convert = (struct bf16_qd8_convert_context) {
+    .n = channels * sizeof(uint16_t),
+    .x_stride = input_stride * sizeof(uint16_t),
+    .y_stride = output_stride,
+    .batch_size = batch_size,
+    .rminmax_ukernel = convert_op->reduce_config->ukernel,
+    .convert_ukernel = convert_op->unary_elementwise_config->ukernel,
+    .init_params = convert_op->unary_elementwise_config->init,
+  };
+
+  if (convert_op->flags & XNN_NODE_FLAG_REQUIRES_ROW_SUM) {
+    convert_op->context.bf16_qd8_convert.rsum_ukernel = convert_op->reduce_config2->ukernel;
+  }
+  memcpy(&convert_op->context.bf16_qd8_convert.params, &convert_op->params.bf16_default, sizeof(convert_op->params.bf16_default));
+
+  convert_op->compute[0].type = xnn_parallelization_type_1d_tile_1d_dynamic;
+  switch (expected_type) {
+    case xnn_operator_type_convert_nc_bf16_qd8:
+      convert_op->compute[0].task_1d_tile_1d_dynamic =
+          (pthreadpool_task_1d_tile_1d_dynamic_t)xnn_compute_bf16_qd8_convert;
+      break;
+    case xnn_operator_type_convert_nc_bf16_qdu8:
+      convert_op->compute[0].task_1d_tile_1d_dynamic =
+          (pthreadpool_task_1d_tile_1d_dynamic_t)xnn_compute_bf16_qdu8_convert;
+      break;
+    default:
+      XNN_UNREACHABLE;
+  }
+  convert_op->compute[0].range[0] = batch_size;
+  convert_op->compute[0].tile[0] = divide_round_up(
+      get_tile_size(convert_op), convert_op->context.bf16_qd8_convert.n);
+
+  convert_op->compute[1].type = xnn_parallelization_type_1d;
+  convert_op->compute[1].task_1d = (pthreadpool_task_1d_t) xnn_compute_pad_qd8_params;
+  convert_op->compute[1].range[0] = 1;
+
+  convert_op->state = xnn_run_state_needs_setup;
+
+  return xnn_status_success;
 }
 
 enum xnn_status reshape_convert_nc_f16_qx8(
@@ -1059,6 +1162,18 @@ enum xnn_status reshape_convert_nc_f32_qx8(
   return xnn_status_success;
 }
 
+enum xnn_status xnn_reshape_convert_nc_bf16_qd8(
+    xnn_operator_t convert_op, size_t batch_size, size_t channels,
+    size_t input_stride, size_t output_stride, pthreadpool_t threadpool) {
+  return reshape_convert_nc_bf16_qx8(convert_op, batch_size, channels, input_stride, output_stride, xnn_operator_type_convert_nc_bf16_qd8, threadpool);
+}
+
+enum xnn_status xnn_reshape_convert_nc_bf16_qdu8(
+    xnn_operator_t convert_op, size_t batch_size, size_t channels,
+    size_t input_stride, size_t output_stride, pthreadpool_t threadpool) {
+  return reshape_convert_nc_bf16_qx8(convert_op, batch_size, channels, input_stride, output_stride, xnn_operator_type_convert_nc_bf16_qdu8, threadpool);
+}
+
 enum xnn_status xnn_reshape_convert_nc_f16_qd8(
     xnn_operator_t convert_op,
     size_t batch_size,
@@ -1181,6 +1296,24 @@ enum xnn_status xnn_reshape_copy_nc_x8(
     threadpool);
 }
 
+enum xnn_status xnn_reshape_convert_nc_qs8_qc8(
+    xnn_operator_t convert_op,
+    size_t batch_size,
+    size_t channels,
+    size_t input_stride,
+    size_t output_stride,
+    pthreadpool_t threadpool)
+{
+  return reshape_unary_elementwise_nc(
+    convert_op, xnn_operator_type_convert_nc_qs8_qc8,
+    batch_size,
+    channels, input_stride, output_stride,
+    /*log2_input_size=*/XNN_LOG2_SIZEOF_UINT8_T,
+    /*log2_output_size=*/XNN_LOG2_SIZEOF_UINT8_T,
+    /*params=*/NULL, /*params_size=*/0,
+    threadpool);
+}
+
 enum xnn_status xnn_reshape_copy_nc_x16(
     xnn_operator_t copy_op,
     size_t batch_size,
@@ -1215,6 +1348,47 @@ enum xnn_status xnn_reshape_copy_nc_x32(
     /*log2_output_size=*/XNN_LOG2_SIZEOF_UINT32_T,
     /*params=*/NULL, /*params_size=*/0,
     threadpool);
+}
+
+enum xnn_status setup_convert_nc_bf16_qx8(
+  xnn_operator_t convert_op,
+  const void* input,
+  void* output,
+  enum xnn_operator_type expected_operator_type,
+  void* row_sum,
+  struct xnn_quantization_params* quantization_params)
+{
+  if (convert_op->type != expected_operator_type) {
+    xnn_log_error(
+        "failed to setup operator: operator type mismatch (expected %s, got "
+        "%s)",
+        xnn_operator_type_to_string(expected_operator_type),
+        xnn_operator_type_to_string_v2(convert_op));
+    return xnn_status_invalid_parameter;
+  }
+
+  switch (convert_op->state) {
+    case xnn_run_state_skip:
+      return xnn_status_success;
+    case xnn_run_state_invalid:
+      xnn_log_error(
+          "failed to setup %s operator: operator has not been reshaped yet",
+          xnn_operator_type_to_string_v2(convert_op));
+      return xnn_status_invalid_state;
+    case xnn_run_state_needs_setup:
+      // Operator has been reshaped, but not setup, continue with setup.
+    case xnn_run_state_ready:
+      // Operator has been reshaped, and we are setting up with different pointers.
+      break;
+  }
+
+  convert_op->context.bf16_qd8_convert.x = input;
+  convert_op->context.bf16_qd8_convert.y = output;
+  convert_op->context.bf16_qd8_convert.quantization_params = (struct xnn_qd8_quantization_params*) quantization_params;
+  convert_op->context.bf16_qd8_convert.row_sum = row_sum;
+  convert_op->state = xnn_run_state_ready;
+
+  return xnn_status_success;
 }
 
 enum xnn_status setup_convert_nc_f16_qx8(
@@ -1321,6 +1495,26 @@ enum xnn_status xnn_setup_convert_nc_f16_qdu8(
   return setup_convert_nc_f16_qx8(convert_op, input, output, xnn_operator_type_convert_nc_f16_qdu8, row_sum, quantization_params);
 }
 
+enum xnn_status xnn_setup_convert_nc_bf16_qd8(
+  xnn_operator_t convert_op,
+  const void* input,
+  int8_t* output,
+  float* row_sum,
+  struct xnn_quantization_params* quantization_params)
+{
+  return setup_convert_nc_bf16_qx8(convert_op, input, output, xnn_operator_type_convert_nc_bf16_qd8, row_sum, quantization_params);
+}
+
+enum xnn_status xnn_setup_convert_nc_bf16_qdu8(
+  xnn_operator_t convert_op,
+  const void* input,
+  uint8_t* output,
+  float* row_sum,
+  struct xnn_quantization_params* quantization_params)
+{
+  return setup_convert_nc_bf16_qx8(convert_op, input, output, xnn_operator_type_convert_nc_bf16_qdu8, row_sum, quantization_params);
+}
+
 enum xnn_status xnn_setup_convert_nc_f32_qd8(
   xnn_operator_t convert_op,
   const float* input,
@@ -1380,6 +1574,16 @@ enum xnn_status xnn_setup_copy_nc_x8(
 {
   return setup_unary_elementwise_nc(
     copy_op, xnn_operator_type_copy_nc_x8,
+    input, output);
+}
+
+enum xnn_status xnn_setup_convert_nc_qs8_qc8(
+    xnn_operator_t convert_op,
+    const int8_t* input,
+    int8_t* output)
+{
+  return setup_unary_elementwise_nc(
+    convert_op, xnn_operator_type_convert_nc_qs8_qc8,
     input, output);
 }
 

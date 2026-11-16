@@ -45,6 +45,20 @@ cc_library(
     ],
 )
 
+define_build_option(
+    name = "ynn_enable_tsl_profiler",
+)
+
+_TSL_PROFILER_DEPS = [
+    # The capability to add tsl profiler traces is disabled by default. To enable and use it:add:
+    #
+    # git_repository(name = "xla", branch = "main", remote = "https://github.com/openxla/xla")
+    #
+    # To MODULE.bazel, add `--define ynn_enable_tsl_profiler=true` to the bazel command line, and
+    # uncomment this dependency.
+    # "@xla//xla/tsl/profiler/lib:traceme"
+]
+
 cc_library(
     name = "subgraph",
     srcs = [
@@ -54,23 +68,28 @@ cc_library(
         "copy.cc",
         "copy.h",
         "dot.cc",
-        "dot.h",
+        "dynamic_quantization.cc",
         "elementwise.cc",
-        "elementwise.h",
         "even_split.cc",
         "fusion.cc",
         "fusion_lut.cc",
         "fusion_lut.h",
         "fusion_types.cc",
         "fusion_types.h",
+        "gather.cc",
+        "gather.h",
         "get_tensor_shape.cc",
+        "iota.cc",
+        "iota.h",
         "reduce.cc",
         "reduce.h",
         "runtime.cc",
+        "slice_like.cc",
         "slinky.cc",
         "stack.cc",
         "static_pad.cc",
         "static_slice.cc",
+        "static_slice.h",
         "static_transpose.cc",
         "stencil_copy.cc",
         "stencil_copy.h",
@@ -80,13 +99,20 @@ cc_library(
         "utils.cc",
     ],
     hdrs = [
+        "dot.h",  # Only public for tests...
+        "elementwise.h",  # Only public for tests...
         "runtime.h",
         "slinky.h",
+        "static_transpose.h",  # Only public for tests...
         "subgraph.h",
         "tensor.h",
         "utils.h",
     ],
     compatible_with = _COMPATIBLE_WITH,
+    defines = select({
+        ":ynn_enable_tsl_profiler": ["YNN_ENABLE_TSL_PROFILER"],
+        "//conditions:default": [],
+    }),
     visibility = ["//ynnpack:__subpackages__"],
     deps = [
         ":slinky_thread_pool",
@@ -94,9 +120,11 @@ cc_library(
         "//ynnpack/base",
         "//ynnpack/base:log",
         "//ynnpack/kernels/binary",
+        "//ynnpack/kernels/dequantize_dot",
         "//ynnpack/kernels/dot",
         "//ynnpack/kernels/dot:pack",
         "//ynnpack/kernels/dot:schedule",
+        "//ynnpack/kernels/iota",
         "//ynnpack/kernels/lut",
         "//ynnpack/kernels/reduce",
         "//ynnpack/kernels/ternary",
@@ -108,6 +136,9 @@ cc_library(
         "@slinky//slinky/runtime",
     ] + select({
         ":ynn_enable_perfetto": [":perfetto"],
+        "//conditions:default": [],
+    }) + select({
+        ":ynn_enable_tsl_profiler": _TSL_PROFILER_DEPS,
         "//conditions:default": [],
     }),
 )

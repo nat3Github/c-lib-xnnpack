@@ -4,51 +4,23 @@
 # LICENSE file in the root directory of this source tree.
 
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
-load("@rules_cc//cc:cc_test.bzl", "cc_test")
-load("//ynnpack:build_defs.bzl", "ynn_binary_linkopts", "ynn_binary_malloc", "ynn_test_deps")
 
 _COMPATIBLE_WITH = []
-
-cc_library(
-    name = "utils",
-    srcs = ["utils.cc"],
-    hdrs = ["utils.h"],
-    compatible_with = _COMPATIBLE_WITH,
-    deps = [
-        "//:xnnpack_h",
-        "//ynnpack",
-        "//ynnpack/base",
-        "//ynnpack/subgraph",
-    ],
-)
-
-cc_library(
-    name = "dynamic_quantization",
-    srcs = ["dynamic_quantization.cc"],
-    hdrs = ["dynamic_quantization.h"],
-    compatible_with = _COMPATIBLE_WITH,
-    deps = [
-        ":utils",
-        "//ynnpack",
-        "//ynnpack/base",
-        "//ynnpack/base:log",
-        "//ynnpack/kernels/dot",
-        "//ynnpack/subgraph",
-        "@slinky//slinky/builder",
-        "@slinky//slinky/runtime",
-    ],
-)
 
 # This library is a drop-in replacement for XNNPACK, using ynnpack as the implementation.
 cc_library(
     name = "xnnpack",
     srcs = [
         "deprecated.cc",
+        "dynamic_quantization.cc",
+        "dynamic_quantization.h",
         "experimental.cc",
         "operator.cc",
         "runtime.cc",
         "subgraph.cc",
         "tensor.cc",
+        "utils.cc",
+        "utils.h",
         "weights_cache.cc",
         "workspace.cc",
         "xnnpack.h",
@@ -57,33 +29,17 @@ cc_library(
     defines = ["XNNPACK_USING_YNNPACK=1"],
     visibility = ["//visibility:public"],
     deps = [
-        ":dynamic_quantization",
-        ":utils",
         "//:xnnpack_h",
         "//ynnpack",
         "//ynnpack/base",
         "//ynnpack/base:log",
+        "//ynnpack/composites",
+        "//ynnpack/kernels/dot",
         "//ynnpack/subgraph",
         "@pthreadpool",
         "@slinky//slinky/base:thread_pool",
+        "@slinky//slinky/base:thread_pool_impl",
     ],
-)
-
-cc_test(
-    name = "dynamic_quantization_test",
-    srcs = ["dynamic_quantization_test.cc"],
-    linkopts = ynn_binary_linkopts(),
-    malloc = ynn_binary_malloc(),
-    deps = [
-        ":dynamic_quantization",
-        "//ynnpack:ynnpack_h",
-        "//ynnpack/base",
-        "//ynnpack/base/test:fuzz_test",
-        "//ynnpack/base/test:random",
-        "//ynnpack/base/test:tensor",
-        "//ynnpack/base/test:util",
-        "//ynnpack/subgraph/test:subgraph_builder",
-    ] + ynn_test_deps(),
 )
 
 config_setting(

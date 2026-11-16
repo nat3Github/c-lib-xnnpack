@@ -29,9 +29,11 @@ SET(PROD_AVXVNNI_MICROKERNEL_SRCS
   src/qs8-packw/gen/qs8-packw-x8c8-gemm-goi-avxvnni-prfm.c
   src/qs8-packw/gen/qs8-packw-x8c8-gemm-goi-avxvnni.c
   src/qs8-qc2w-gemm/gen/qs8-qc2w-gemm-1x8c8-minmax-fp32-avxvnni.c
-  src/qs8-qc2w-gemm/gen/qs8-qc2w-gemm-4x8c8-minmax-fp32-avxvnni.c
+  src/qs8-qc2w-gemm/gen/qs8-qc2w-gemm-5x8c8-minmax-fp32-avxvnni.c
   src/qs8-qc4w-gemm/gen/qs8-qc4w-gemm-1x8c8-minmax-avxvnni-prfm.c
   src/qs8-qc4w-gemm/gen/qs8-qc4w-gemm-5x8c8-minmax-avxvnni-prfm.c
+  src/qs8-qc4w-packw/gen/qs8-qc4w-packw-x8c8-gemm-goi-avxvnni.c
+  src/qs8-qc4w-packw/gen/qs8-to-qu8-qc4w-packw-x8c8-gemm-goi-avxvnni.c
   src/qs8-qc8w-gemm/gen/qs8-qc8w-gemm-1x8c8-minmax-fp32-avxvnni-prfm.c
   src/qs8-qc8w-gemm/gen/qs8-qc8w-gemm-5x8c8-minmax-fp32-avxvnni-prfm.c
   src/qs8-qc8w-igemm/gen/qs8-qc8w-igemm-1x8c8-minmax-fp32-avxvnni-prfm.c
@@ -158,7 +160,7 @@ SET(NON_PROD_AVXVNNI_MICROKERNEL_SRCS
   src/qs8-packw/gen/qs8-packw-x16c8-gemm-goi-avxvnni.c
   src/qs8-qc2w-gemm/gen/qs8-qc2w-gemm-2x8c8-minmax-fp32-avxvnni.c
   src/qs8-qc2w-gemm/gen/qs8-qc2w-gemm-3x8c8-minmax-fp32-avxvnni.c
-  src/qs8-qc2w-gemm/gen/qs8-qc2w-gemm-5x8c8-minmax-fp32-avxvnni.c
+  src/qs8-qc2w-gemm/gen/qs8-qc2w-gemm-4x8c8-minmax-fp32-avxvnni.c
   src/qs8-qc2w-gemm/gen/qs8-qc2w-gemm-6x8c8-minmax-fp32-avxvnni.c
   src/qs8-qc2w-gemm/gen/qs8-qc2w-gemm-7x8c8-minmax-fp32-avxvnni.c
   src/qs8-qc2w-gemm/gen/qs8-qc2w-gemm-8x8c8-minmax-fp32-avxvnni.c
@@ -177,9 +179,11 @@ SET(NON_PROD_AVXVNNI_MICROKERNEL_SRCS
   src/qs8-qc4w-gemm/gen/qs8-qc4w-gemm-8x8c8-minmax-avxvnni-prfm.c
   src/qs8-qc4w-gemm/gen/qs8-qc4w-gemm-8x8c8-minmax-avxvnni.c
   src/qs8-qc4w-packw/gen/qs8-qc4w-packw-x8c8-gemm-goi-avxvnni-prfm.c
-  src/qs8-qc4w-packw/gen/qs8-qc4w-packw-x8c8-gemm-goi-avxvnni.c
   src/qs8-qc4w-packw/gen/qs8-qc4w-packw-x16c8-gemm-goi-avxvnni-prfm.c
   src/qs8-qc4w-packw/gen/qs8-qc4w-packw-x16c8-gemm-goi-avxvnni.c
+  src/qs8-qc4w-packw/gen/qs8-to-qu8-qc4w-packw-x8c8-gemm-goi-avxvnni-prfm.c
+  src/qs8-qc4w-packw/gen/qs8-to-qu8-qc4w-packw-x16c8-gemm-goi-avxvnni-prfm.c
+  src/qs8-qc4w-packw/gen/qs8-to-qu8-qc4w-packw-x16c8-gemm-goi-avxvnni.c
   src/qs8-qc8w-gemm/gen/qs8-qc8w-gemm-1x8c8-minmax-fp32-avxvnni.c
   src/qs8-qc8w-gemm/gen/qs8-qc8w-gemm-2x8c8-minmax-fp32-avxvnni-prfm.c
   src/qs8-qc8w-gemm/gen/qs8-qc8w-gemm-2x8c8-minmax-fp32-avxvnni.c
@@ -215,4 +219,4 @@ SET(NON_PROD_AVXVNNI_MICROKERNEL_SRCS
   src/qs8-rsum/gen/qs8-rsum-avxvnni-u64-acc2.c
   src/qs8-rsum/gen/qs8-rsum-avxvnni-u128-acc4.c)
 
-SET(ALL_AVXVNNI_MICROKERNEL_SRCS ${PROD_AVXVNNI_MICROKERNEL_SRCS} + ${NON_PROD_AVXVNNI_MICROKERNEL_SRCS})
+SET(ALL_AVXVNNI_MICROKERNEL_SRCS ${PROD_AVXVNNI_MICROKERNEL_SRCS} ${NON_PROD_AVXVNNI_MICROKERNEL_SRCS})

@@ -3,12 +3,13 @@
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree.
 
-#include "ynnpack/base/simd/arm64_sve.h"
-
 #include <cstdint>
 
 #include <gtest/gtest.h>
 #include "ynnpack/base/arch.h"
+#include "ynnpack/base/simd/arm_vec128.h"
+
+// This must be included last
 #include "ynnpack/base/simd/test/generic.h"
 
 namespace ynn {
@@ -29,6 +30,7 @@ TEST_PARTIAL_LOAD_STORE(arm64_sve, f16, 8);
 TEST_PARTIAL_LOAD_STORE(arm64_sve, bf16, 8);
 TEST_PARTIAL_LOAD_STORE(arm64_sve, f32, 4);
 TEST_PARTIAL_LOAD_STORE(arm64_sve, s32, 4);
+TEST_PARTIAL_LOAD_STORE(arm64_sve, f64, 2);
 
 TEST_PARTIAL_LOAD_STORE(arm64_sve, f16, 4);
 TEST_PARTIAL_LOAD_STORE(arm64_sve, u8, 8);

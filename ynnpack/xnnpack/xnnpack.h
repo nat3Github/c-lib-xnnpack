@@ -11,6 +11,7 @@
 #include <map>
 
 #include "ynnpack/include/ynnpack.h"
+#include <pthreadpool.h>
 
 // We could just cast `xnn_subgraph_t` to `ynn_subgraph_t`, but this approach is
 // both type safe and gives us a place to put some XNNPACK-specific metadata
@@ -21,6 +22,21 @@ struct xnn_subgraph {
   // When implementing `xnn_define_dynamically_quantized_tensor_value`, we don't
   // have anywhere to put this, so store it here.
   std::map<uint32_t, size_t> num_nonbatch_axes;
+
+  // Quantization data for each tensor in the XNNPACK subgraph.
+  std::map<uint32_t, uint32_t> scale_ids;
+  std::map<uint32_t, uint32_t> zero_point_ids;
+};
+
+typedef struct xnn_subgraph* xnn_subgraph_t;
+
+// We could just cast `xnn_runtime_t` to `ynn_runtime_t`, but this approach is
+// both type safe and gives us a place to put a pthreadpool, which we can't
+// easily adapt to a `ynn_threadpool_t`.
+struct xnn_runtime {
+  ynn_runtime_t ynn;
+
+  pthreadpool_t pthreadpool = nullptr;
 };
 
 #endif  // XNNPACK_YNNPACK_XNNPACK_XNNPACK_H_

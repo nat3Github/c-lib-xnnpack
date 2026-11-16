@@ -20,8 +20,15 @@
 static const size_t NCHW_AXES_MAPPING[4] = {0, 2, 3, 1};
 static const size_t INVERSE_NCHW_AXES_MAPPING[4] = {0, 3, 2, 1};
 
-static void rewrite_reduction_axes_for_nchw(size_t num_reduction_axes,
-                                            int64_t* reduction_axes) {
+static enum xnn_status rewrite_reduction_axes_for_nchw(
+    size_t num_reduction_axes, int64_t* reduction_axes) {
+  if (num_reduction_axes > 4) {
+    xnn_log_error(
+        "failed to rewrite reduction axes for NCHW: num_reduction_axes %zu "
+        "exceeds 4",
+        num_reduction_axes);
+    return xnn_status_invalid_parameter;
+  }
   bool mask[4] = {false};
   int64_t original_reduction_axes[4];
   memcpy(original_reduction_axes, reduction_axes,
@@ -39,6 +46,7 @@ static void rewrite_reduction_axes_for_nchw(size_t num_reduction_axes,
       mask[idx] = false;
     }
   }
+  return xnn_status_success;
 }
 
 static enum xnn_status create_reduce_operator(
@@ -126,11 +134,22 @@ static enum xnn_status reshape_reduce_operator(
     reduction_axes[i] = 0 <= opdata->reduction_axes[i]
                             ? opdata->reduction_axes[i]
                             : input_num_dims + opdata->reduction_axes[i];
+    if (reduction_axes[i] < 0 || reduction_axes[i] >= (int64_t) input_num_dims) {
+      xnn_log_error(
+          "failed to reshape Reduce operator with input ID #%" PRIu32
+          ": reduction axis #%d (%" PRId64
+          ") is out of bounds for a %zu-dimensional input",
+          input_id, i, reduction_axes[i], input_num_dims);
+      return xnn_status_invalid_parameter;
+    }
   }
   size_t input_dims[XNN_MAX_TENSOR_DIMS];
   memcpy(input_dims, input_value->shape.dim, input_num_dims * sizeof(size_t));
   if (input_value->shape.num_dims == 4 && input_value->flags & XNN_VALUE_FLAG_LAYOUT_NCHW) {
-    rewrite_reduction_axes_for_nchw(num_reduction_axes, reduction_axes);
+    status = rewrite_reduction_axes_for_nchw(num_reduction_axes, reduction_axes);
+    if (status != xnn_status_success) {
+      return status;
+    }
 
     for (size_t idx = 0; idx < input_num_dims; ++idx) {
       input_dims[idx] = input_value->shape.dim[INVERSE_NCHW_AXES_MAPPING[idx]];
@@ -187,7 +206,7 @@ static enum xnn_status reshape_reduce_operator(
       if (input_value->flags & XNN_VALUE_FLAG_LAYOUT_NCHW) {
         mapped_input_idx = INVERSE_NCHW_AXES_MAPPING[input_idx];
       }
-      if (output_value->flags == XNN_VALUE_FLAG_LAYOUT_NCHW) {
+      if (output_value->flags & XNN_VALUE_FLAG_LAYOUT_NCHW) {
         mapped_output_idx = NCHW_AXES_MAPPING[mapped_input_idx];
       }
 
@@ -254,6 +273,13 @@ enum xnn_status xnn_define_static_reduce(
   uint32_t output_id,
   uint32_t flags)
 {
+  if (num_reduction_axes > XNN_MAX_TENSOR_DIMS) {
+    xnn_log_error(
+        "failed to define reduce operator with %zu reduction axes: "
+        "the number of reduction axes must not exceed %zu",
+        num_reduction_axes, (size_t) XNN_MAX_TENSOR_DIMS);
+    return xnn_status_invalid_parameter;
+  }
   int64_t signed_reduction_axes[XNN_MAX_TENSOR_DIMS];
   for (int i = 0; i < num_reduction_axes; i++) {
     signed_reduction_axes[i] = reduction_axes[i];
@@ -329,6 +355,13 @@ enum xnn_status xnn_define_static_reduce_v2(
     xnn_log_error(
       "failed to define %s operator with %zu reduction axes: the number of reduction axes must be non-zero",
       xnn_node_type_to_string(node_type), num_reduction_axes);
+    return xnn_status_invalid_parameter;
+  }
+
+  if (num_reduction_axes > XNN_MAX_TENSOR_DIMS) {
+    xnn_log_error(
+      "failed to define %s operator with %zu reduction axes: the number of reduction axes must not exceed %zu",
+      xnn_node_type_to_string(node_type), num_reduction_axes, (size_t) XNN_MAX_TENSOR_DIMS);
     return xnn_status_invalid_parameter;
   }
 
