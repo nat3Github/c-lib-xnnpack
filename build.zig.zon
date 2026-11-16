@@ -3,9 +3,23 @@
     .version = "0.0.0",
     .fingerprint = 0xe08d670bec40d97f,
     .minimum_zig_version = "0.17.1",
-    .paths = .{""},
+    .paths = .{ "build.zig", "build.zig.zon", "include", "src", "gen", "LICENSE" },
     .dependencies = .{
-        .cpuinfo = .{ .path = "../cpuinfo" },
-        .pthreadpool = .{ .path = "../pthreadpool-fork" },
+        .fxdiv = .{
+            .url = "git+https://github.com/Maratyszcza/FXdiv#b408327ac2a15ec3e43352421954f5b1967701d1",
+            .hash = "N-V-__8AAOOmAAAw9F1E2j8Eu5UgvZVYz5shqfdejnPV9msN",
+        },
+        .fp16 = .{
+            .url = "git+https://github.com/Maratyszcza/FP16#4dfe081cf6bcd15db339cf2680b9281b8451eeb3",
+            .hash = "N-V-__8AANhkBwAk7LjPlFs0n1x5UyF96QZLdLG7YBrIP0Lt",
+        },
+        .cpuinfo = .{
+            .url = "git+https://github.com/nat3Github/c-lib-cpuinfo#94811dbe0432536919ce1be5a577a7df19bd7c6a",
+            .hash = "cpuinfo-0.0.0-DdwsNhU5DQD2hwkp5DZ7-eyfid2_cPLzmd73asFS_3gM",
+        },
+        .pthreadpool = .{
+            .url = "git+https://github.com/nat3Github/c-lib-pthreadpool#1416b5b21302da270fd333f38003603c4230eb16",
+            .hash = "pthreadpool-0.0.0-mwFHPkxtCQCzYFb_4Ou01Wz4uK5ZgCKCKwS4LCk6Upgk",
+        },
     },
 }

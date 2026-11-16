@@ -1,0 +1,13 @@
+.{
+    .name = .pthreadpool,
+    .version = "0.0.0",
+    .dependencies = .{
+        .fxdiv = .{
+            .url = "git+https://github.com/Maratyszcza/FXdiv#b408327ac2a15ec3e43352421954f5b1967701d1",
+            .hash = "N-V-__8AAOOmAAAw9F1E2j8Eu5UgvZVYz5shqfdejnPV9msN",
+        },
+    },
+    .fingerprint = 0x9b886b063e47019b,
+    .minimum_zig_version = "0.17.1",
+    .paths = .{ "build.zig", "build.zig.zon", "include", "src", "LICENSE" },
+}

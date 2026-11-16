@@ -268,8 +268,8 @@ pub fn addModule(
     // be on the path. FP16/FXdiv are header-only deps, not worth their own
     // package — just add their include dirs directly.
     mod.addIncludePath(b.path("."));
-    mod.addIncludePath(b.path("../FP16-fork/include"));
-    mod.addIncludePath(b.path("../FXdiv-fork/include"));
+    mod.addIncludePath(b.dependency("fp16", .{}).path("include"));
+    mod.addIncludePath(b.dependency("fxdiv", .{}).path("include"));
 
     const t = target.result;
     const enable_flags = xnnEnableFlags(arena, t.cpu.arch);

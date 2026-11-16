@@ -1,0 +1,7 @@
+.{
+    .name = .cpuinfo,
+    .version = "0.0.0",
+    .fingerprint = 0xf7ef0533362cdc0d,
+    .minimum_zig_version = "0.17.1",
+    .paths = .{ "build.zig", "build.zig.zon", "include", "src", "LICENSE" },
+}
