@@ -44,6 +44,8 @@ fn xnnEnableFlags(arena: std.mem.Allocator, arch: std.Target.Cpu.Arch) []const [
     append(&flags, arena, std.fmt.allocPrint(arena, "-DXNN_ENABLE_ASSEMBLY={d}", .{@intFromBool(is_x86_64 or is_aarch64)}) catch @panic("OOM"));
     append(&flags, arena, "-DXNN_ENABLE_SPARSE=0");
     append(&flags, arena, "-DXNN_ENABLE_HVX=0");
+    append(&flags, arena, "-DXNN_ENABLE_RNDNU16=1");
+    append(&flags, arena, "-DXNN_ENABLE_WASMRELAXEDSIMDFP16=0");
     append(&flags, arena, "-DXNN_ENABLE_WASM_REVECTORIZE=0");
     // Level 5 (Debug) writes raw, unbuffered `write()` calls straight to
     // stdout (xnnpack-fork/src/log.c) — every other level (Info/Warning/
@@ -119,6 +121,7 @@ const aarch64_tiers = [_]IsaTier{
     .{ .name = "neondot", .bzl_var = "NEONDOT", .cflags = targetFeatureFlags(&.{"dotprod"}) },
     .{ .name = "neondot_aarch64", .bzl_var = "NEONDOT_AARCH64", .cflags = targetFeatureFlags(&.{"dotprod"}) },
     .{ .name = "neoni8mm", .bzl_var = "NEONI8MM", .cflags = targetFeatureFlags(&.{ "i8mm", "fullfp16" }) },
+    .{ .name = "neoni8mmbf16", .bzl_var = "NEONI8MMBF16", .cflags = targetFeatureFlags(&.{ "i8mm", "fullfp16", "bf16" }) },
     .{ .name = "neonsme", .bzl_var = "NEONSME", .cflags = targetFeatureFlags(&.{ "sve", "sve2" }) },
     .{ .name = "neonsme2", .bzl_var = "NEONSME2", .cflags = targetFeatureFlags(&.{ "sve", "sve2" }) },
 };
@@ -229,8 +232,9 @@ const subgraph_srcs = &[_][]const u8{
 /// Only C++ XNNPACK needs at the operator/subgraph layer (reference
 /// pack/unary/binary fallbacks for shapes/dtypes no fast microkernel covers).
 const cxx_srcs = &[_][]const u8{
-    "src/pack-lh.cc",                     "src/reference/packing.cc",
-    "src/reference/unary-elementwise.cc", "src/reference/binary-elementwise.cc",
+    "src/pack-lh.cc",                       "src/reference/packing.cc",
+    "src/subgraph/rewrites/cvt_to_fp32.cc", "src/reference/unary-elementwise.cc",
+    "src/reference/binary-elementwise.cc",
 };
 
 fn addTierSources(b: *std.Build, arena: std.mem.Allocator, mod: *std.Build.Module, tier: IsaTier, enable_flags: []const []const u8) void {
@@ -275,10 +279,10 @@ pub fn addModule(
     const enable_flags = xnnEnableFlags(arena, t.cpu.arch);
 
     const base_srcs = &[_][]const u8{
-        "src/init.c",                         "src/allocator.c",                  "src/log.c",                                "src/params.c",
-        "src/configs/hardware-config.c",      "src/tables/exp2-k-over-64.c",      "src/tables/exp2-k-over-2048.c",            "src/tables/exp2minus-k-over-4.c",
-        "src/tables/exp2minus-k-over-8.c",    "src/tables/exp2minus-k-over-16.c", "src/tables/exp2minus-k-over-32.c",         "src/tables/exp2minus-k-over-64.c",
-        "src/tables/exp2minus-k-over-2048.c", "src/tables/vlog.c",
+        "src/init.c",                       "src/allocator.c",                    "src/log.c",                        "src/params.c",
+        "src/configs/hardware-config.c",    "src/xnnpack/init-once.c",            "src/tables/exp2-k-over-64.c",      "src/tables/exp2-k-over-2048.c",
+        "src/tables/exp2minus-k-over-4.c",  "src/tables/exp2minus-k-over-8.c",    "src/tables/exp2minus-k-over-16.c", "src/tables/exp2minus-k-over-32.c",
+        "src/tables/exp2minus-k-over-64.c", "src/tables/exp2minus-k-over-2048.c", "src/tables/vlog.c",
         // NON_PROD scalar reference kernel the PoC calls directly.
                        "src/f32-vbinary/gen/f32-vadd-scalar-u4.c",
     };
@@ -289,8 +293,8 @@ pub fn addModule(
     for (operator_srcs) |s| mod.addCSourceFile(.{ .file = b.path(s), .flags = enable_flags });
     for (subgraph_srcs) |s| mod.addCSourceFile(.{ .file = b.path(s), .flags = enable_flags });
 
-    // CMakeLists.txt sets CMAKE_CXX_STANDARD 14 for the whole project.
-    const xnnpack_cxx_flags = std.mem.concat(arena, []const u8, &.{ &[_][]const u8{"-std=c++14"}, enable_flags }) catch @panic("OOM");
+    // CMakeLists.txt sets CMAKE_CXX_STANDARD 17 for the whole project.
+    const xnnpack_cxx_flags = std.mem.concat(arena, []const u8, &.{ &[_][]const u8{"-std=c++17"}, enable_flags }) catch @panic("OOM");
     for (cxx_srcs) |s| mod.addCSourceFile(.{ .file = b.path(s), .flags = xnnpack_cxx_flags });
 
     addTierSources(b, arena, mod, .{ .name = "scalar", .bzl_var = "SCALAR" }, enable_flags);
